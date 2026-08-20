@@ -57,6 +57,7 @@ Instalación vacía de tablas: ejecuta `backend/sql/schema.sql` en el SQL Editor
 
 | Variable | Valor |
 |----------|--------|
+| `PYTHON_VERSION` | `3.12.8` *(obligatorio: no uses 3.14)* |
 | `DATABASE_URL` | URL de Neon (la misma idea que tu `.env` local) |
 | `JWT_SECRET` | la clave larga que generaste |
 | `AUTH_MODE` | `microsoft` |
