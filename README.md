@@ -42,10 +42,59 @@ python scripts/generar_sql_neon.py --apply   # aplica directo a Neon
 
 Instalación vacía de tablas: ejecuta `backend/sql/schema.sql` en el SQL Editor de Neon.
 
-## Despliegue (checklist)
+## Despliegue: Render (API) + Vercel (web)
 
-- `DATABASE_URL` y `JWT_SECRET` propios (no reutilizar los de desarrollo)
-- `CORS_ORIGINS` con el dominio real del frontend
-- `VITE_API_URL` apuntando al backend público al hacer `npm run build`
-- Backend con **un solo worker/proceso** (el login Microsoft guarda el flujo en memoria)
-- Opcional: health check de la plataforma → `/api/health/db`
+### 1) Backend en Render
+
+1. [Render](https://dashboard.render.com) → **New** → **Web Service** → conecta el repo `CTRL_VACACIONAL_PYC`.
+2. Configura:
+   - **Root Directory:** `backend`
+   - **Runtime:** Python 3
+   - **Build Command:** `pip install -r requirements.txt`
+   - **Start Command:** `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+   - **Health Check Path:** `/api/health`
+3. Variables de entorno (Environment):
+
+| Variable | Valor |
+|----------|--------|
+| `DATABASE_URL` | URL de Neon (la misma idea que tu `.env` local) |
+| `JWT_SECRET` | la clave larga que generaste |
+| `AUTH_MODE` | `microsoft` |
+| `MS_CLIENT_ID` | `d3590ed6-52b3-4102-aeff-aad2292ab01c` |
+| `MS_AUTHORITY` | `https://login.microsoftonline.com/common` |
+| `MS_SCOPE` | `openid profile email` |
+| `CORS_ORIGINS` | URL de Vercel (ej. `https://tu-app.vercel.app`) |
+| `EXPOSE_DOCS` | `false` |
+
+4. Deploy. Anota la URL pública, ej. `https://ctrl-vacacional-api.onrender.com`.
+
+> Plan free de Render duerme el servicio tras inactividad; el primer request puede tardar ~30–60 s.
+
+### 2) Frontend en Vercel
+
+1. [Vercel](https://vercel.com) → **Add New Project** → importa el mismo repo.
+2. Configura:
+   - **Root Directory:** `frontend`
+   - **Framework Preset:** Vite
+   - **Build Command:** `npm run build`
+   - **Output Directory:** `dist`
+3. Variable de entorno:
+
+| Variable | Valor |
+|----------|--------|
+| `VITE_API_URL` | URL del backend en Render **sin** barra final, ej. `https://ctrl-vacacional-api.onrender.com` |
+
+4. Deploy. Copia la URL de Vercel.
+
+### 3) Cruzar URLs (importante)
+
+1. En **Render**, actualiza `CORS_ORIGINS` con la URL exacta de Vercel (puedes dejar también localhost si quieres):
+   `https://tu-app.vercel.app,http://localhost:5173`
+2. Redeploy en Render (o “Manual Deploy”) para aplicar CORS.
+3. Si cambiaste el dominio de Vercel, actualiza también `VITE_API_URL` y vuelve a desplegar el front.
+
+### Checklist rápido
+
+- No subas `.env` (ya está en `.gitignore`)
+- Un solo proceso/worker en Render (default OK; no pongas varios workers)
+- Health opcional más estricto: `/api/health/db`

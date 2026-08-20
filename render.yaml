@@ -1,0 +1,31 @@
+# Blueprint opcional de Render.
+# También puedes crear el Web Service a mano con los mismos valores.
+services:
+  - type: web
+    name: ctrl-vacacional-api
+    runtime: python
+    rootDir: backend
+    plan: free
+    region: oregon
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.8"
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: AUTH_MODE
+        value: microsoft
+      - key: MS_CLIENT_ID
+        value: d3590ed6-52b3-4102-aeff-aad2292ab01c
+      - key: MS_AUTHORITY
+        value: https://login.microsoftonline.com/common
+      - key: MS_SCOPE
+        value: openid profile email
+      - key: CORS_ORIGINS
+        sync: false
+      - key: EXPOSE_DOCS
+        value: "false"
