@@ -44,13 +44,13 @@ app.include_router(dashboard_router)
 app.include_router(reports_router)
 
 
-@app.get("/api/health")
+@app.api_route("/api/health", methods=["GET", "HEAD"])
 def health(response: Response):
     """Liveness simple: confirma que el proceso responde, sin tocar la base de datos."""
     return {"ok": True}
 
 
-@app.get("/api/health/db")
+@app.api_route("/api/health/db", methods=["GET", "HEAD"])
 def health_db(response: Response):
     """Readiness: úsalo en el orquestador (Azure/Render/Railway) para saber si Neon responde."""
     ok = check_connection()
