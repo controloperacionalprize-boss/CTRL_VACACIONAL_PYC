@@ -1,0 +1,51 @@
+# --- Secretos / entorno (NUNCA subir) ---
+.env
+.env.*
+!.env.example
+!**/.env.example
+frontend/.env
+backend/.env
+
+# --- Python ---
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+.coverage
+htmlcov/
+dist/
+build/
+
+# --- Node / frontend ---
+node_modules/
+frontend/dist/
+frontend/dist-ssr/
+*.tsbuildinfo
+.vite/
+
+# --- Datos personales / dumps ---
+*.xlsx
+*.xls
+*.db
+*.sqlite
+backend/sql/carga_datos.sql
+
+# --- Logs / temp ---
+*.log
+tmp/
+temp/
+.cache/
+
+# --- OS / editores ---
+.DS_Store
+Thumbs.db
+Desktop.ini
+.idea/
+.vscode/
+*.swp
+*~

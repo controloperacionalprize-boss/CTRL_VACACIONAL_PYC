@@ -1,0 +1,1 @@
+# Planificador de vacaciones — API

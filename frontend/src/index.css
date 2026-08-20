@@ -1,0 +1,80 @@
+@import "tailwindcss";
+
+:root {
+  --background: #f4f7fb;
+  --foreground: #0f1c2e;
+  --muted: #e8eef5;
+  --muted-foreground: #5b6b7c;
+  --card: #ffffff;
+  --border: #d7e0ea;
+  --primary: #1a56db;
+  --primary-foreground: #ffffff;
+  --primary-soft: #e8effc;
+  --success: #047857;
+  --success-foreground: #ffffff;
+  --success-muted: #d1fae5;
+  --warning: #d97706;
+  --warning-foreground: #ffffff;
+  --warning-muted: #fef3c7;
+  --error: #dc2626;
+  --error-foreground: #ffffff;
+  --error-muted: #fee2e2;
+  --info: #1d5fb8;
+  --info-foreground: #ffffff;
+  --info-muted: #dbeafe;
+  --sidebar: #ffffff;
+  --overlay: #0b182899;
+  --shadow-card: 0 1px 2px #0f1c2e0a, 0 4px 12px #0f1c2e08;
+  --radius-card: 12px;
+  --radius-input: 10px;
+  --radius-table: 8px;
+}
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-card: var(--card);
+  --color-border: var(--border);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-success-muted: var(--success-muted);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-warning-muted: var(--warning-muted);
+  --color-error: var(--error);
+  --color-error-foreground: var(--error-foreground);
+  --color-error-muted: var(--error-muted);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
+  --color-info-muted: var(--info-muted);
+  --color-sidebar: var(--sidebar);
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    background: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+  }
+
+  .font-primary {
+    font-family: "Inter", ui-sans-serif, system-ui, sans-serif;
+  }
+
+  .font-data {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+  }
+}
