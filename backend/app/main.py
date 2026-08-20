@@ -1,7 +1,8 @@
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Response
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from .config import get_settings
 from .db import check_connection, close_pool
@@ -11,6 +12,9 @@ from .routers.catalog import router as catalog_router
 from .routers.dashboard import router as dashboard_router
 from .routers.plan import router as plan_router
 from .routers.reports import router as reports_router
+
+# Cambia con cada fix de deploy para verificar en /api/version qué código está vivo.
+DEPLOY_MARK = "head-fix-v3"
 
 
 @asynccontextmanager
@@ -44,28 +48,24 @@ app.include_router(dashboard_router)
 app.include_router(reports_router)
 
 
-@app.get("/api/health")
-def health():
-    """Liveness simple: confirma que el proceso responde, sin tocar la base de datos."""
-    return {"ok": True}
+@app.api_route("/api/health", methods=["GET", "HEAD"])
+def health(request: Request):
+    """Liveness: GET y HEAD (UptimeRobot / Render). Sin tocar la base de datos."""
+    if request.method == "HEAD":
+        return Response(status_code=200)
+    return JSONResponse({"ok": True})
 
 
-@app.head("/api/health")
-def health_head():
-    return Response(status_code=200)
+@app.get("/api/version")
+def version():
+    """Sirve para confirmar que Render tomó el último deploy."""
+    return {"ok": True, "deploy": DEPLOY_MARK}
 
 
-@app.get("/api/health/db")
-def health_db(response: Response):
-    """Readiness: úsalo en el orquestador (Azure/Render/Railway) para saber si Neon responde."""
+@app.api_route("/api/health/db", methods=["GET", "HEAD"])
+def health_db(request: Request):
+    """Readiness: confirma que Neon responde."""
     ok = check_connection()
-    if not ok:
-        response.status_code = 503
-    return {"ok": ok}
-
-
-@app.head("/api/health/db")
-def health_db_head(response: Response):
-    ok = check_connection()
-    response.status_code = 200 if ok else 503
-    return response
+    if request.method == "HEAD":
+        return Response(status_code=200 if ok else 503)
+    return JSONResponse({"ok": ok}, status_code=200 if ok else 503)

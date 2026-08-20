@@ -9,7 +9,8 @@ services:
     region: oregon
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
-    healthCheckPath: /api/health
+    # Vacío recomendado si el deploy falla por health check; UptimeRobot ya cubre el keep-alive.
+    # healthCheckPath: /api/health
     envVars:
       - key: PYTHON_VERSION
         value: "3.12.8"
