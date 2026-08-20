@@ -33,6 +33,21 @@ class Settings(BaseSettings):
             )
         return v
 
+    @field_validator("cors_origins")
+    @classmethod
+    def cors_origins_ok(cls, v: str) -> str:
+        # Quita comillas accidentales y barras finales: "https://x.vercel.app/" → https://x.vercel.app
+        parts = []
+        for raw in (v or "").split(","):
+            o = raw.strip().strip("\"'").rstrip("/")
+            if o:
+                parts.append(o)
+        return ",".join(parts)
+
+    @property
+    def cors_origin_list(self) -> list[str]:
+        return [o for o in self.cors_origins.split(",") if o]
+
 
 @lru_cache
 def get_settings() -> Settings:
