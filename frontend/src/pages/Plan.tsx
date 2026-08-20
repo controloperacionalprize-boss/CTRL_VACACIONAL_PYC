@@ -2,7 +2,7 @@ import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useSta
 import { api, qs } from "../api";
 import { SEM_COLORS, weekLocked } from "../lib/semaforo";
 import { useApp } from "../state";
-import { Alert, Button, EmptyState, Field, Input, Kpi, PageHeader } from "../components/ui";
+import { Alert, Button, cn, EmptyState, Field, Input, Kpi, PageHeader } from "../components/ui";
 import { CalendarDays, CalendarPlus, Users, UserCheck, UserX } from "lucide-react";
 
 type Worker = {
@@ -111,6 +111,74 @@ const WorkerRow = memo(function WorkerRow({
   );
 });
 
+const WorkerCard = memo(function WorkerCard({
+  w,
+  weekWindow,
+  lockedWeeks,
+  onDays,
+}: {
+  w: Worker;
+  weekWindow: number[];
+  lockedWeeks: boolean[];
+  onDays: (w: Worker, week: number, days: number) => void;
+}) {
+  return (
+    <article className="rounded-xl border border-border bg-card p-3.5 shadow-[var(--shadow-card)]">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="truncate text-[14px] font-semibold">{w.nombre}</p>
+          <p className="mt-0.5 text-[12px] text-muted-foreground">
+            {w.dni} · {w.area || w.tipo_personal}
+          </p>
+        </div>
+        <span
+          className={cn(
+            "shrink-0 rounded-lg px-2 py-1 text-[11px] font-semibold",
+            w.total_dias === 0 ? "bg-warning-muted text-warning" : "bg-[var(--primary-soft)] text-primary"
+          )}
+        >
+          {w.total_dias === 0 ? "Sin días" : `${w.total_dias} días`}
+        </span>
+      </div>
+      <div className="mt-3 grid grid-cols-6 gap-1.5">
+        {weekWindow.map((week) => {
+          const idx = week - 1;
+          const val = w.weeks[idx] || 0;
+          const locked = lockedWeeks[idx];
+          const bg = val ? SEM_COLORS[val] : locked ? "var(--muted)" : "transparent";
+          return (
+            <label key={week} className="flex flex-col items-center gap-0.5">
+              <span className="text-[9px] font-semibold text-muted-foreground">S{week}</span>
+              {locked ? (
+                <span
+                  className="flex h-9 w-full items-center justify-center rounded-md border border-border text-[11px] font-medium text-muted-foreground"
+                  style={{ background: bg }}
+                >
+                  {val || "—"}
+                </span>
+              ) : (
+                <input
+                  type="number"
+                  min={0}
+                  max={7}
+                  value={val}
+                  onChange={(e) => {
+                    const raw = e.target.value;
+                    if (raw === "") return;
+                    onDays(w, week, Number(raw));
+                  }}
+                  className="h-9 w-full rounded-md border border-border text-center text-[11px] font-medium outline-none"
+                  style={{ background: bg }}
+                />
+              )}
+            </label>
+          );
+        })}
+      </div>
+    </article>
+  );
+});
+
 export function PlanPage() {
   const { filters } = useApp();
   const [plan, setPlan] = useState<Plan | null>(null);
@@ -163,6 +231,13 @@ export function PlanPage() {
       weekLocked(plan.year, i + 1, plan.current_year, plan.current_week)
     );
   }, [plan?.year, plan?.current_year, plan?.current_week, plan?.total_semanas]);
+
+  const weekWindow = useMemo(() => {
+    if (!plan) return [];
+    const start = Math.max(1, (plan.current_week || 1) - 1);
+    const end = Math.min(plan.total_semanas, start + 5);
+    return Array.from({ length: end - start + 1 }, (_, i) => start + i);
+  }, [plan?.current_week, plan?.total_semanas]);
 
   const searchIndex = useMemo(
     () =>
@@ -341,15 +416,15 @@ export function PlanPage() {
         help={`Estás en la semana ${plan.current_week}. Las semanas anteriores no se pueden cambiar.`}
       />
 
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4 md:gap-4">
         <Kpi label="Trabajadores" value={plan.kpis.trabajadores} hint="Personas en este filtro" icon={<Users size={18} strokeWidth={1.75} />} />
         <Kpi label="Programados" value={plan.kpis.programados} hint="Ya tienen vacaciones" icon={<UserCheck size={18} strokeWidth={1.75} />} />
         <Kpi label="Sin programación" value={plan.kpis.pendientes} hint={`Aún sin días en ${plan.year}`} icon={<UserX size={18} strokeWidth={1.75} />} />
         <Kpi label="Días programados" value={plan.kpis.dias} hint="Suma de todas las semanas" icon={<CalendarDays size={18} strokeWidth={1.75} />} />
       </div>
 
-      <div className="grid grid-cols-[2fr_1fr_1fr_auto] items-end gap-3 rounded-xl border border-border bg-card p-4 shadow-[var(--shadow-card)]">
-        <Field label="TRABAJADOR">
+      <div className="grid grid-cols-1 items-end gap-3 rounded-xl border border-border bg-card p-4 shadow-[var(--shadow-card)] sm:grid-cols-2 md:grid-cols-[2fr_1fr_1fr_auto]">
+        <Field label="TRABAJADOR" className="sm:col-span-2 md:col-span-1">
           <div ref={consecBoxRef} className="relative">
             <Input
               type="search"
@@ -401,13 +476,13 @@ export function PlanPage() {
             onChange={(e) => setConsec({ ...consec, days: Number(e.target.value) })}
           />
         </Field>
-        <Button onClick={programarConsec}>
+        <Button onClick={programarConsec} className="w-full md:w-auto">
           <CalendarPlus size={16} strokeWidth={1.75} />
           Programar vacaciones
         </Button>
       </div>
 
-      <div className="flex max-w-sm items-center gap-2">
+      <div className="flex w-full max-w-sm items-center gap-2">
         <Input
           type="search"
           autoComplete="off"
@@ -443,41 +518,51 @@ export function PlanPage() {
       ) : visible.length === 0 ? (
         <EmptyState title="Nadie coincide" body="Prueba con otro nombre, DNI o área." />
       ) : (
-        <div className="max-h-[70vh] overflow-auto rounded-[8px] border border-border bg-card shadow-[var(--shadow-card)]">
-          <table className="border-collapse text-xs">
-            <thead>
-              <tr className="bg-muted">
-                {["Nombre", "DNI", "Área", "Tipo", "Total"].map((h) => (
-                  <th
-                    key={h}
-                    className="sticky top-0 z-20 border-b border-border bg-muted px-2.5 py-2 text-left text-[11px] font-semibold text-muted-foreground"
-                  >
-                    {h}
-                  </th>
-                ))}
-                {Array.from({ length: plan.total_semanas }, (_, i) => i + 1).map((w) => {
-                  const locked = lockedWeeks[w - 1];
-                  const current = plan.year === plan.current_year && w === plan.current_week;
-                  return (
+        <>
+          <div className="space-y-3 md:hidden">
+            <p className="text-[11px] text-muted-foreground">
+              Semanas {weekWindow[0]}–{weekWindow[weekWindow.length - 1]} (alrededor de la actual). En escritorio ves el año completo.
+            </p>
+            {visible.map((w) => (
+              <WorkerCard key={w.dni} w={w} weekWindow={weekWindow} lockedWeeks={lockedWeeks} onDays={onDays} />
+            ))}
+          </div>
+          <div className="hidden max-h-[70vh] overflow-auto rounded-[8px] border border-border bg-card shadow-[var(--shadow-card)] md:block">
+            <table className="border-collapse text-xs">
+              <thead>
+                <tr className="bg-muted">
+                  {["Nombre", "DNI", "Área", "Tipo", "Total"].map((h) => (
                     <th
-                      key={w}
-                      className={`sticky top-0 z-10 min-w-9 border-b border-border px-1 py-2 text-center text-[11px] font-semibold ${
-                        current ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
-                      }`}
+                      key={h}
+                      className="sticky top-0 z-20 border-b border-border bg-muted px-2.5 py-2 text-left text-[11px] font-semibold text-muted-foreground"
                     >
-                      {locked ? <span className="opacity-60">S{w}</span> : `S${w}`}
+                      {h}
                     </th>
-                  );
-                })}
-              </tr>
-            </thead>
-            <tbody>
-              {visible.map((w) => (
-                <WorkerRow key={w.dni} w={w} lockedWeeks={lockedWeeks} onDays={onDays} />
-              ))}
-            </tbody>
-          </table>
-        </div>
+                  ))}
+                  {Array.from({ length: plan.total_semanas }, (_, i) => i + 1).map((w) => {
+                    const locked = lockedWeeks[w - 1];
+                    const current = plan.year === plan.current_year && w === plan.current_week;
+                    return (
+                      <th
+                        key={w}
+                        className={`sticky top-0 z-10 min-w-9 border-b border-border px-1 py-2 text-center text-[11px] font-semibold ${
+                          current ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
+                        }`}
+                      >
+                        {locked ? <span className="opacity-60">S{w}</span> : `S${w}`}
+                      </th>
+                    );
+                  })}
+                </tr>
+              </thead>
+              <tbody>
+                {visible.map((w) => (
+                  <WorkerRow key={w.dni} w={w} lockedWeeks={lockedWeeks} onDays={onDays} />
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
       )}
 
       <div className="flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground">

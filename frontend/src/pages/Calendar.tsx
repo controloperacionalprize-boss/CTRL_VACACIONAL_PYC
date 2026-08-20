@@ -144,8 +144,8 @@ export function CalendarPage() {
   return (
     <div className="space-y-6">
       <PageHeader title="Calendario del empleado" help="Busca por nombre o DNI. Luego ves los días y cuántos le quedan este año." />
-      <div className="flex flex-wrap items-end gap-3">
-        <Field label="EMPLEADO" className="min-w-80 max-w-xl flex-1">
+      <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
+        <Field label="EMPLEADO" className="min-w-0 w-full max-w-xl flex-1 sm:min-w-80">
           <div ref={boxRef} className="relative">
             <Input
               type="search"
@@ -188,7 +188,7 @@ export function CalendarPage() {
             ) : null}
           </div>
         </Field>
-        <Field label="AÑO" className="w-36">
+        <Field label="AÑO" className="w-full sm:w-36">
           <Select value={year} onChange={(e) => setYear(Number(e.target.value))}>
             {Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - 1 + i).map((y) => (
               <option key={y}>{y}</option>
@@ -201,7 +201,7 @@ export function CalendarPage() {
         <EmptyState title="Elige a alguien" body="Escribe el nombre o el DNI arriba para ver su calendario." />
       ) : cal ? (
         <div className="space-y-5">
-          <div className="grid grid-cols-4 gap-6 rounded-xl border border-border bg-card p-4 text-sm shadow-[var(--shadow-card)]">
+          <div className="grid grid-cols-1 gap-4 rounded-xl border border-border bg-card p-4 text-sm shadow-[var(--shadow-card)] sm:grid-cols-2 md:grid-cols-4 md:gap-6">
             {[
               ["Empleado", cal.empleado.nombre],
               ["DNI", cal.empleado.dni],
@@ -214,14 +214,14 @@ export function CalendarPage() {
               </div>
             ))}
           </div>
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <Kpi label="Derecho anual" value={30} hint="Días que corresponden por año" icon={<CalendarRange size={18} strokeWidth={1.75} />} />
             <Kpi label="Usados" value={cal.consumido} hint="Ya programados" icon={<CalendarCheck size={18} strokeWidth={1.75} />} />
             <Kpi label="Disponibles" value={cal.disponible} hint={`Quedan para ${year}`} icon={<CalendarClock size={18} strokeWidth={1.75} />} />
           </div>
           <div className="rounded-xl border border-border bg-card p-4 shadow-[var(--shadow-card)]">
             <h3 className="mb-4 text-[13px] font-semibold">Días programados en {year}</h3>
-            <div className="grid grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 md:gap-4">
               {Array.from({ length: 12 }, (_, m) => (
                 <MiniCal key={m} year={year} month={m} marked={marked} />
               ))}

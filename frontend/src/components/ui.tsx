@@ -68,22 +68,24 @@ export function Kpi({
   value,
   hint,
   icon,
+  className,
 }: {
   label: string;
   value: string | number;
   hint?: string;
   icon?: ReactNode;
+  className?: string;
 }) {
   return (
-    <div className="rounded-xl border border-border bg-card p-4 shadow-[var(--shadow-card)]">
+    <div className={cn("rounded-xl border border-border bg-card p-3.5 shadow-[var(--shadow-card)] md:p-4", className)}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="text-[11px] font-semibold tracking-wide text-muted-foreground">{label}</div>
-          <div className="font-data mt-1.5 text-[28px] font-semibold leading-none text-foreground">{value}</div>
-          {hint ? <div className="mt-1.5 text-[11px] text-muted-foreground">{hint}</div> : null}
+          <div className="font-data mt-1.5 text-[24px] font-semibold leading-none text-foreground md:text-[28px]">{value}</div>
+          {hint ? <div className="mt-1.5 hidden text-[11px] text-muted-foreground sm:block">{hint}</div> : null}
         </div>
         {icon ? (
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-[var(--primary-soft)] text-primary">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] bg-[var(--primary-soft)] text-primary md:h-9 md:w-9">
             {icon}
           </div>
         ) : null}

@@ -84,12 +84,12 @@ export function DashboardPage() {
         </Alert>
       ) : null}
 
-      <div className="grid grid-cols-5 gap-3">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
         <Kpi label="Trabajadores" value={data.total_people} hint="Personas en este filtro" icon={<Users size={18} strokeWidth={1.75} />} />
         <Kpi label="Programados" value={data.programados} hint={`Ya tienen vacaciones en ${filters.year}`} icon={<UserCheck size={18} strokeWidth={1.75} />} />
         <Kpi label="Sin programar" value={data.pendientes} hint="Aún sin días" icon={<UserX size={18} strokeWidth={1.75} />} />
         <Kpi label="Días" value={data.dias_totales} hint="Suma de vacaciones" icon={<CalendarDays size={18} strokeWidth={1.75} />} />
-        <Kpi label="Cobertura %" value={`${Math.round(data.cobertura_prom * 100)}%`} hint="Promedio de gente presente" icon={<Percent size={18} strokeWidth={1.75} />} />
+        <Kpi label="Cobertura %" value={`${Math.round(data.cobertura_prom * 100)}%`} hint="Promedio de gente presente" icon={<Percent size={18} strokeWidth={1.75} />} className="col-span-2 md:col-span-1" />
       </div>
 
       <section className="rounded-xl border border-border bg-card p-4 shadow-[var(--shadow-card)]">
@@ -126,8 +126,8 @@ export function DashboardPage() {
         </ResponsiveContainer>
       </section>
 
-      <div className="grid grid-cols-2 gap-4">
-        <section className="h-80 rounded-xl border border-border bg-card p-4">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+        <section className="h-72 rounded-xl border border-border bg-card p-4 md:h-80">
           <h3 className="mb-3 text-[13px] font-semibold">Días por gerencia</h3>
           <ResponsiveContainer>
             <BarChart data={ger} layout="vertical" margin={{ left: 80 }}>
@@ -139,7 +139,7 @@ export function DashboardPage() {
             </BarChart>
           </ResponsiveContainer>
         </section>
-        <section className="h-80 rounded-xl border border-border bg-card p-4">
+        <section className="h-72 rounded-xl border border-border bg-card p-4 md:h-80">
           <h3 className="mb-3 text-[13px] font-semibold">Tipo de personal</h3>
           <ResponsiveContainer>
             <PieChart>
@@ -154,8 +154,8 @@ export function DashboardPage() {
         </section>
       </div>
 
-      <section className="overflow-hidden rounded-[4px] border border-border bg-card">
-        <table className="w-full text-sm">
+      <section className="overflow-x-auto rounded-[4px] border border-border bg-card">
+        <table className="w-full min-w-[480px] text-sm">
           <thead className="bg-muted text-left">
             <tr>
               {["Semana", "Periodo", "Más personas el mismo día", "% del equipo"].map((h) => (

@@ -68,6 +68,7 @@
     background: var(--background);
     color: var(--foreground);
     font-family: var(--font-sans);
+    -webkit-tap-highlight-color: transparent;
   }
 
   .font-primary {
@@ -76,5 +77,25 @@
 
   .font-data {
     font-family: "IBM Plex Mono", ui-monospace, monospace;
+  }
+
+  input[type="number"],
+  input[type="date"],
+  input[type="search"],
+  input[type="email"],
+  input[type="text"],
+  select {
+    font-size: 16px;
+  }
+
+  @media (min-width: 768px) {
+    input[type="number"],
+    input[type="date"],
+    input[type="search"],
+    input[type="email"],
+    input[type="text"],
+    select {
+      font-size: inherit;
+    }
   }
 }

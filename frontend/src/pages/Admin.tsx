@@ -292,11 +292,11 @@ export function AdminPage() {
         help=""
       />
 
-      <div className="flex gap-2">
-        <Button variant={tab === "users" ? "primary" : "outline"} onClick={() => setTab("users")}>
+      <div className="flex gap-2 overflow-x-auto">
+        <Button variant={tab === "users" ? "primary" : "outline"} onClick={() => setTab("users")} className="shrink-0">
           Usuarios
         </Button>
-        <Button variant={tab === "logs" ? "primary" : "outline"} onClick={() => setTab("logs")}>
+        <Button variant={tab === "logs" ? "primary" : "outline"} onClick={() => setTab("logs")} className="shrink-0">
           Historial de cambios
         </Button>
       </div>
@@ -314,84 +314,116 @@ export function AdminPage() {
 
       {tab === "users" ? (
         <>
-          <div className="grid grid-cols-[1.4fr_1.2fr_1fr_auto_auto] items-end gap-3 rounded-xl border border-border bg-card p-4">
-            <Field label="CORREO">
-              <Input
-                type="email"
-                value={form.correo}
-                onChange={(e) => setForm({ ...form, correo: e.target.value })}
-                placeholder="nombre@empresa.com"
-              />
-            </Field>
-            <Field label="NOMBRE">
-              <Input
-                value={form.nombre_persona}
-                onChange={(e) => setForm({ ...form, nombre_persona: e.target.value })}
-              />
-            </Field>
-            <Field label="GERENCIA">
-              <Input
-                list="gerencias-admin"
-                value={form.gerencia}
-                onChange={(e) => setForm({ ...form, gerencia: e.target.value })}
-              />
-              <datalist id="gerencias-admin">
-                {gerencias.map((g) => (
-                  <option key={g} value={g} />
-                ))}
-              </datalist>
-            </Field>
-            <Field label="ROL" className="w-36">
-              <Select value={form.rol} onChange={(e) => setForm({ ...form, rol: e.target.value })}>
+          <div className="grid grid-cols-1 items-end gap-3 rounded-xl border border-border bg-card p-4 sm:grid-cols-2 lg:grid-cols-[1.4fr_1.2fr_1fr_auto_auto]">
+        <Field label="CORREO" className="sm:col-span-2 lg:col-span-1">
+          <Input
+            type="email"
+            value={form.correo}
+            onChange={(e) => setForm({ ...form, correo: e.target.value })}
+            placeholder="nombre@empresa.com"
+          />
+        </Field>
+        <Field label="NOMBRE">
+          <Input
+            value={form.nombre_persona}
+            onChange={(e) => setForm({ ...form, nombre_persona: e.target.value })}
+          />
+        </Field>
+        <Field label="GERENCIA">
+          <Input
+            list="gerencias-admin"
+            value={form.gerencia}
+            onChange={(e) => setForm({ ...form, gerencia: e.target.value })}
+          />
+          <datalist id="gerencias-admin">
+            {gerencias.map((g) => (
+              <option key={g} value={g} />
+            ))}
+          </datalist>
+        </Field>
+        <Field label="ROL" className="w-full lg:w-36">
+          <Select value={form.rol} onChange={(e) => setForm({ ...form, rol: e.target.value })}>
+            <option value="USER">USER</option>
+            <option value="ADMIN">ADMIN</option>
+          </Select>
+        </Field>
+        <Button onClick={addUser} className="w-full lg:w-auto">Agregar</Button>
+      </div>
+
+      <div className="space-y-3 md:hidden">
+        {users.map((u) => (
+          <article key={u.correo} className="rounded-xl border border-border bg-card p-3.5">
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                <p className="truncate text-[14px] font-semibold">{u.nombre_persona || u.nombre_usuario}</p>
+                <p className="mt-0.5 truncate text-[12px] text-muted-foreground">{u.correo}</p>
+                <p className="mt-1 text-[12px] text-foreground">{u.gerencia || "—"}</p>
+              </div>
+              <Button
+                variant={u.activo ? "outline" : "primary"}
+                className="h-8 shrink-0 px-3 text-xs"
+                disabled={u.correo === user.correo}
+                onClick={() => patchUser(u.correo, { activo: !u.activo })}
+              >
+                {u.activo ? "Activo" : "Inactivo"}
+              </Button>
+            </div>
+            <Field label="ROL" className="mt-3">
+              <Select
+                value={u.rol}
+                onChange={(e) => patchUser(u.correo, { rol: e.target.value })}
+                disabled={u.correo === user.correo}
+              >
                 <option value="USER">USER</option>
                 <option value="ADMIN">ADMIN</option>
               </Select>
             </Field>
-            <Button onClick={addUser}>Agregar</Button>
-          </div>
+          </article>
+        ))}
+      </div>
 
-          <div className="overflow-auto rounded-[4px] border border-border bg-card">
-            <table className="w-full text-sm">
-              <thead className="bg-muted text-left">
-                <tr>
-                  {["Nombre", "Correo", "Gerencia", "Rol", "Estado"].map((h) => (
-                    <th key={h} className="px-3 py-2 text-[11px] font-semibold text-muted-foreground">
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {users.map((u) => (
-                  <tr key={u.correo} className="border-t border-border">
-                    <td className="px-3 py-2 font-medium">{u.nombre_persona || u.nombre_usuario}</td>
-                    <td className="px-3 py-2">{u.correo}</td>
-                    <td className="px-3 py-2">{u.gerencia}</td>
-                    <td className="px-3 py-2">
-                      <Select
-                        value={u.rol}
-                        onChange={(e) => patchUser(u.correo, { rol: e.target.value })}
-                        disabled={u.correo === user.correo}
-                      >
-                        <option value="USER">USER</option>
-                        <option value="ADMIN">ADMIN</option>
-                      </Select>
-                    </td>
-                    <td className="px-3 py-2">
-                      <Button
-                        variant={u.activo ? "outline" : "primary"}
-                        className="h-8 px-3 text-xs"
-                        disabled={u.correo === user.correo}
-                        onClick={() => patchUser(u.correo, { activo: !u.activo })}
-                      >
-                        {u.activo ? "Activo" : "Inactivo"}
-                      </Button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+      <div className="hidden overflow-auto rounded-[4px] border border-border bg-card md:block">
+        <table className="w-full text-sm">
+          <thead className="bg-muted text-left">
+            <tr>
+              {["Nombre", "Correo", "Gerencia", "Rol", "Estado"].map((h) => (
+                <th key={h} className="px-3 py-2 text-[11px] font-semibold text-muted-foreground">
+                  {h}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {users.map((u) => (
+              <tr key={u.correo} className="border-t border-border">
+                <td className="px-3 py-2 font-medium">{u.nombre_persona || u.nombre_usuario}</td>
+                <td className="px-3 py-2">{u.correo}</td>
+                <td className="px-3 py-2">{u.gerencia}</td>
+                <td className="px-3 py-2">
+                  <Select
+                    value={u.rol}
+                    onChange={(e) => patchUser(u.correo, { rol: e.target.value })}
+                    disabled={u.correo === user.correo}
+                  >
+                    <option value="USER">USER</option>
+                    <option value="ADMIN">ADMIN</option>
+                  </Select>
+                </td>
+                <td className="px-3 py-2">
+                  <Button
+                    variant={u.activo ? "outline" : "primary"}
+                    className="h-8 px-3 text-xs"
+                    disabled={u.correo === user.correo}
+                    onClick={() => patchUser(u.correo, { activo: !u.activo })}
+                  >
+                    {u.activo ? "Activo" : "Inactivo"}
+                  </Button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
         </>
       ) : (
         <>

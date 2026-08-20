@@ -179,7 +179,7 @@ export function ExportPage() {
       />
 
       <div className="grid gap-4 lg:grid-cols-[1.4fr_1fr]">
-        <div className="overflow-hidden rounded-xl border border-border bg-card shadow-[var(--shadow-card)]">
+        <div className="order-2 overflow-hidden rounded-xl border border-border bg-card shadow-[var(--shadow-card)] lg:order-1">
           {SHEETS.map(([name, desc], i) => (
             <div key={name} className={`flex items-center gap-3 px-4 py-3 ${i < SHEETS.length - 1 ? "border-b border-border" : ""}`}>
               <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] bg-[var(--primary-soft)] text-primary">
@@ -193,7 +193,7 @@ export function ExportPage() {
           ))}
         </div>
 
-        <div className="space-y-4">
+        <div className="order-1 space-y-4 lg:order-2">
           {result ? (
             total === 0 ? (
               <Alert tone="success" title="El plan está en orden">

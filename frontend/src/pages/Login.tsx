@@ -71,7 +71,7 @@ export function Login({ onLogin }: Props) {
 
   return (
     <div className="flex min-h-full items-center justify-center bg-background px-4">
-      <div className="flex w-full max-w-[440px] flex-col gap-4 rounded-xl border border-border bg-card px-11 py-10">
+      <div className="flex w-full max-w-[440px] flex-col gap-4 rounded-xl border border-border bg-card px-6 py-8 sm:px-11 sm:py-10">
         <p className="text-xs font-medium text-muted-foreground">GTH · Prize / Aquanqa</p>
         <div>
           <h1 className="text-[28px] font-semibold tracking-tight text-foreground">Vacaciones</h1>
