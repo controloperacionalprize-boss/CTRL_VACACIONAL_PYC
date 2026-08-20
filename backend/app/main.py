@@ -44,16 +44,28 @@ app.include_router(dashboard_router)
 app.include_router(reports_router)
 
 
-@app.api_route("/api/health", methods=["GET", "HEAD"])
-def health(response: Response):
+@app.get("/api/health")
+def health():
     """Liveness simple: confirma que el proceso responde, sin tocar la base de datos."""
     return {"ok": True}
 
 
-@app.api_route("/api/health/db", methods=["GET", "HEAD"])
+@app.head("/api/health")
+def health_head():
+    return Response(status_code=200)
+
+
+@app.get("/api/health/db")
 def health_db(response: Response):
     """Readiness: úsalo en el orquestador (Azure/Render/Railway) para saber si Neon responde."""
     ok = check_connection()
     if not ok:
         response.status_code = 503
     return {"ok": ok}
+
+
+@app.head("/api/health/db")
+def health_db_head(response: Response):
+    ok = check_connection()
+    response.status_code = 200 if ok else 503
+    return response
