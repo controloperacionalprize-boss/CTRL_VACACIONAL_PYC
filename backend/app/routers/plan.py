@@ -20,6 +20,7 @@ from ..domain.calendar import (
     parse_iso_date,
     record_cumplido,
     move_vacation_period,
+    refresh_week_targets,
     reject_if_art8_invalido,
     reject_if_exceeds_saldo,
     reject_if_start_in_past,
@@ -234,9 +235,12 @@ def patch_week(body: WeekPatch, user: dict = Depends(get_current_user)):
         daily_set, targets = load_scope_plan(cur, body.year, [emp])
         old = int(targets.get((body.dni, body.week), 0))
         if body.days == 0:
-            clear_dates_for_week(daily_set, body.dni, body.year, body.week)
-            targets.pop((body.dni, body.week), None)
-            deltas = [(body.week, old, 0)]
+            clear_dates_for_week(
+                daily_set, body.dni, body.year, body.week, keep_past=True
+            )
+            deltas = refresh_week_targets(
+                daily_set, targets, body.dni, body.year, [body.week]
+            )
             try:
                 reject_if_art8_invalido(daily_set, body.dni, body.year)
             except ValueError as exc:
@@ -301,23 +305,30 @@ def patch_daily(body: DailyPatch, user: dict = Depends(get_current_user)):
         if not emp:
             raise HTTPException(404, "Esa persona no aparece con el filtro actual.")
         daily_set, targets = load_scope_plan(cur, body.year, [emp])
-        clear_dates_for_week(daily_set, body.dni, body.year, body.week)
         allowed = set(week_dates(body.year, body.week))
         modo = allowed_type(emp["tipo_personal"], body.dni)
-        programados = count_year_days(daily_set, body.dni, body.year)
         today = today_lima()
         for d in body.dates:
             if d not in allowed:
                 continue
-            if date_is_past(d, today):
+            if date_is_past(d, today) and key_daily(body.dni, d) not in daily_set:
                 raise HTTPException(
                     400,
                     f"No se puede marcar el {d.strftime('%d/%m/%Y')}: solo desde hoy hacia adelante.",
                 )
+        for d in week_dates(body.year, body.week):
+            if date_is_past(d, today):
+                continue
+            daily_set.discard(key_daily(body.dni, d))
+        for d in body.dates:
+            if d not in allowed or date_is_past(d, today):
+                continue
             if modo != "CALENDARIO" and not is_business_day(d):
                 continue
             daily_set.add(key_daily(body.dni, d))
         n = selected_count(daily_set, body.dni, week_dates(body.year, body.week))
+        programados = count_year_days(daily_set, body.dni, body.year)
+        programados_base = programados - n
         derecho, es_adelanto = _derecho_for_emp(emp, today)
         try:
             reject_if_exceeds_saldo(

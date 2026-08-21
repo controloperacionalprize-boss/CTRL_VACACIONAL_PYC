@@ -269,9 +269,35 @@ def vacation_record_for(
     }
 
 
-def clear_dates_for_week(daily_set: set[str], dni: str, year: int, week: int) -> None:
+def clear_dates_for_week(
+    daily_set: set[str],
+    dni: str,
+    year: int,
+    week: int,
+    *,
+    today: date | None = None,
+    keep_past: bool = False,
+) -> None:
+    today = today or today_lima()
     for d in week_dates(year, week):
+        if keep_past and date_is_past(d, today):
+            continue
         daily_set.discard(key_daily(dni, d))
+
+
+def reject_if_fuera_de_anio_iso(fechas: list[date], year: int) -> None:
+    """El tramo pedido debe caber entero en el año ISO del plan."""
+    if not fechas:
+        return
+    fuera = [d for d in fechas if d.isocalendar()[0] != year]
+    if not fuera:
+        return
+    last = fechas[-1]
+    raise ValueError(
+        f"Esos {len(fechas)} días corridos no caben en el año {year} "
+        f"(llegarían hasta el {last.strftime('%d/%m/%Y')}). "
+        f"Reduce los días o elige una fecha de inicio más temprana."
+    )
 
 
 def compute_consecutive_dates(
@@ -337,15 +363,18 @@ def format_antiguedad(fecha_ingreso: date | None, ref_date: date | None = None) 
 
 
 def group_consecutive_dates(dates_sorted: list[date]) -> list[tuple[date, date]]:
+    """Tramos de días corridos (Art. 8): solo fechas seguidas (gap = 1).
+
+    No une lunes–viernes de semanas distintas saltando sáb/dom no gozados:
+    eso no son 15 días corridos.
+    """
     dates_sorted = sorted(dates_sorted)
     periods: list[tuple[date, date]] = []
     if not dates_sorted:
         return periods
     start = prev = dates_sorted[0]
     for d in dates_sorted[1:]:
-        gap = (d - prev).days
-        gap_dates = [prev + timedelta(days=i) for i in range(1, gap)]
-        if gap == 1 or (gap_dates and all(is_weekend(g) for g in gap_dates)):
+        if (d - prev).days == 1:
             prev = d
             continue
         periods.append((start, prev))
@@ -379,8 +408,9 @@ def apply_consecutive_span(
     today = today or today_lima()
     reject_if_start_in_past(start_date, today)
     if clear_week is not None:
-        clear_dates_for_week(daily_set, dni, year, clear_week)
+        clear_dates_for_week(daily_set, dni, year, clear_week, today=today, keep_past=True)
     fechas = compute_consecutive_dates(tipo, start_date, number_of_days, dni)
+    reject_if_fuera_de_anio_iso(fechas, year)
     in_year = [d for d in fechas if d.isocalendar()[0] == year]
     weeks = sorted({d.isocalendar()[1] for d in in_year})
     if clear_week is not None and clear_week not in weeks:
@@ -392,7 +422,11 @@ def apply_consecutive_span(
             if len(locked) == 1
             else f"Las semanas {', '.join(str(w) for w in locked)} ya pasaron y no se pueden cambiar."
         )
-    ignore = set(week_dates(year, clear_week)) if clear_week is not None else set()
+    ignore = (
+        {d for d in week_dates(year, clear_week) if not date_is_past(d, today)}
+        if clear_week is not None
+        else set()
+    )
     reject_if_span_overlaps(daily_set, dni, in_year, ignore=ignore)
     for d in in_year:
         daily_set.add(key_daily(dni, d))

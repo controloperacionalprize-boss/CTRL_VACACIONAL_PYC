@@ -8,11 +8,18 @@ from .calendar import (
     MAX_DIAS,
     TOTAL_SEMANAS,
     allowed_type,
+    art8_fraccion_ok,
+    count_year_days,
+    derecho_vigente,
+    group_consecutive_dates,
     is_weekend,
     key_daily,
     now_lima,
     parse_daily_key,
+    parse_iso_date,
     selected_count,
+    today_lima,
+    vacation_periods,
     week_dates,
 )
 
@@ -113,18 +120,45 @@ GROUP_META = {
         "title": "Una semana tiene más de 7 días",
         "hint": "En cada semana solo se pueden programar de 0 a 7 días.",
     },
+    "art8": {
+        "title": "Fraccionamiento fuera del Art. 8",
+        "hint": "Hace falta un bloque de 15 días corridos, o dos de al menos 7 y 8. El resto puede ser desde 1 día.",
+    },
+    "saldo": {
+        "title": "Días por encima del derecho / adelanto",
+        "hint": "El total del año no puede superar 30 días, o lo acumulado si aún no cumple el récord.",
+    },
 }
 
 
 def validate_plan(employees, targets, daily_set, year, today: date | None = None):
     from .calendar import week_is_locked
 
-    today = today or date.today()
+    today = today or today_lima()
     warnings = []
     issues: list[dict] = []
 
     for w in employees:
         dni = str(w["dni"])
+        ingreso = parse_iso_date(w.get("fecha_ingreso"))
+        programados = count_year_days(daily_set, dni, year)
+        tope = derecho_vigente(ingreso, today)
+        if programados > tope:
+            issues.append({
+                "code": "saldo",
+                "sample": (
+                    f"{w['nombre']}: tiene {programados} día(s) programados y el tope vigente es {tope}."
+                ),
+            })
+        sizes = [p["dias"] for p in vacation_periods(daily_set, dni, year, today)]
+        if sizes and not art8_fraccion_ok(sizes):
+            issues.append({
+                "code": "art8",
+                "sample": (
+                    f"{w['nombre']}: tramos {sizes} no cumplen el Art. 8 "
+                    f"(15 corridos, o 7+8; el resto desde 1 día)."
+                ),
+            })
         modo = allowed_type(w["tipo_personal"], dni)
         for week in range(1, TOTAL_SEMANAS + 1):
             if week_is_locked(year, week, today):
@@ -204,25 +238,9 @@ def group_periods(employees, daily_set: set[str], year: int):
     result = []
     for dni, dates in by_dni.items():
         w = emp[dni]
-        calendar_days = allowed_type(w["tipo_personal"], str(w["dni"])) == "CALENDARIO"
-        dates = sorted(dates)
-        group_id = 0
-        groups: dict[int, list[date]] = defaultdict(list)
-        previous = None
-        for current in dates:
-            if previous is not None:
-                if calendar_days:
-                    contiguous = (current - previous).days == 1
-                else:
-                    days = (current - previous).days
-                    contiguous = days == 1 or (
-                        previous.weekday() == 4 and current.weekday() == 0 and days <= 3
-                    )
-                if not contiguous:
-                    group_id += 1
-            groups[group_id].append(current)
-            previous = current
-        for gdates in groups.values():
+        marked = sorted(dates)
+        for ini, fin in group_consecutive_dates(marked):
+            n = sum(1 for d in marked if ini <= d <= fin)
             result.append({
                 "dni": dni,
                 "nombre": w["nombre"],
@@ -230,9 +248,9 @@ def group_periods(employees, daily_set: set[str], year: int):
                 "area": w["area"],
                 "jefatura": w["jefatura"],
                 "tipo_personal": w["tipo_personal"],
-                "fecha_inicio": gdates[0].isoformat(),
-                "fecha_fin": gdates[-1].isoformat(),
-                "dias": len(gdates),
+                "fecha_inicio": ini.isoformat(),
+                "fecha_fin": fin.isoformat(),
+                "dias": n,
             })
     result.sort(key=lambda r: (r["fecha_inicio"], r["gerencia"], r["area"], r["nombre"]))
     return result
