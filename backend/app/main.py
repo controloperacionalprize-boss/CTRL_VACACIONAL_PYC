@@ -15,7 +15,7 @@ from .routers.plan import router as plan_router
 from .routers.reports import router as reports_router
 
 # Cambia con cada fix de deploy para verificar en /api/version qué código está vivo.
-DEPLOY_MARK = "pictures-photos-v1"
+DEPLOY_MARK = "plan-syntax-fix-v2"
 
 
 @asynccontextmanager

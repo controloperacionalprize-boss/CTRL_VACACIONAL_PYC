@@ -283,10 +283,10 @@ def patch_week(body: WeekPatch, user: dict = Depends(get_current_user)):
                     derecho=derecho,
                     es_adelanto=es_adelanto,
                 )
+            except ValueError as exc:
+                raise _http_value_error(exc) from exc
         persist_employee(cur, body.year, emp, daily_set, targets, user["correo"])
         _log_week_deltas(cur, emp, body.year, deltas, user)
-    weeks = {str(wk): new for wk, _old, new in deltas}
-    return {"ok": True, "weeks": weeks, "selected": weeks.get(str(body.week), 0)}
     weeks = {str(wk): new for wk, _old, new in deltas}
     return {"ok": True, "weeks": weeks, "selected": weeks.get(str(body.week), 0)}
 
