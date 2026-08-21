@@ -23,6 +23,17 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
     expose_docs: bool = False
 
+    attendance_database_url: str = ""
+    attendance_schema: str = "public"
+    attendance_table: str = "marcaciones"
+    attendance_dni_column: str = "dni"
+    attendance_date_column: str = "fecha"
+
+    # Fotos: https://github.com/CCozd/PICTURES (match por usuario de correo en personal_roster.json)
+    pictures_enabled: bool = True
+    pictures_repo: str = "CCozd/PICTURES"
+    pictures_base_url: str = "https://raw.githubusercontent.com/CCozd/PICTURES/main"
+
     @field_validator("jwt_secret")
     @classmethod
     def jwt_secret_ok(cls, v: str) -> str:

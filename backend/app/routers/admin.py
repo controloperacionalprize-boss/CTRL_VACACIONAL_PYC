@@ -5,6 +5,8 @@ from pydantic import BaseModel, field_validator
 
 from ..auth import require_admin
 from ..db import get_conn
+from ..photos import coverage_report, picture_index, resolve_foto_url
+from ..services import list_employees
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -229,7 +231,7 @@ def timeline(year: int, user: dict = Depends(require_admin)):
                     "autor": autor,
                     "correo": (ev.get("correo") or "").strip(),
                     "iniciales": _iniciales(autor),
-                    "foto_url": None,
+                    "foto_url": resolve_foto_url(autor),
                     "tipo_persona": ev.get("tipo_persona") or "",
                 }
             )
@@ -240,8 +242,19 @@ def timeline(year: int, user: dict = Depends(require_admin)):
                 "nombre": last.get("nombre") or dni,
                 "jefatura": last.get("jefatura") or "",
                 "cambios": len(numbered),
+                "foto_url": resolve_foto_url(last.get("nombre") or ""),
                 "events": numbered,
             }
         )
     threads.sort(key=lambda t: t["nombre"].casefold())
     return {"year": year, "total": len(rows), "threads": threads}
+
+
+@router.get("/photos/coverage")
+def photos_coverage(user: dict = Depends(require_admin)):
+    """Qué empleados tienen foto en PICTURES y quiénes no (typos / sin archivo)."""
+    with get_conn(write=False) as conn:
+        employees = list_employees(conn.cursor(), user)
+    report = coverage_report([e["nombre"] for e in employees])
+    report["index_ok"] = bool(picture_index())
+    return report

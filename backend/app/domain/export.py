@@ -58,31 +58,6 @@ def build_record(employees, dias_map: dict[str, list[date]]):
     return rows
 
 
-def employee_calendar_payload(worker, anio: int, fechas: list[date]):
-    f_ingreso = worker.get("fecha_ingreso")
-    if isinstance(f_ingreso, str) and f_ingreso:
-        f_ingreso = date.fromisoformat(f_ingreso[:10])
-    periods = group_consecutive_dates(fechas)
-    period_rows = []
-    for ini, fin in periods:
-        duracion = sum(1 for d in fechas if ini <= d <= fin)
-        period_rows.append({
-            "tipo": "Vacaciones",
-            "inicio": ini.isoformat(),
-            "fin": fin.isoformat(),
-            "dias": duracion,
-        })
-    return {
-        "empleado": worker,
-        "anio": anio,
-        "antiguedad": format_antiguedad(f_ingreso if isinstance(f_ingreso, date) else None),
-        "consumido": len(fechas),
-        "disponible": max(30 - len(fechas), -99),
-        "fechas": [d.isoformat() for d in fechas],
-        "periodos": period_rows,
-    }
-
-
 def export_excel(
     employees,
     daily_set,

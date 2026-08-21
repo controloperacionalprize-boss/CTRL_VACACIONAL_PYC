@@ -6,14 +6,20 @@ from pydantic import BaseModel, field_validator
 from ..auth import get_current_user
 from ..db import get_conn
 from ..domain.calendar import (
+    DERECHO_ANUAL,
     TOTAL_SEMANAS,
     allowed_type,
     apply_consecutive_span,
-    apply_week_number,
     clear_dates_for_week,
+    count_year_days,
+    date_is_past,
+    ensure_within_derecho,
     is_business_day,
     key_daily,
+    reject_if_exceeds_saldo,
+    reject_if_start_in_past,
     selected_count,
+    today_lima,
     week_dates,
     week_is_locked,
 )
@@ -21,6 +27,29 @@ from ..domain.plan import log_change, persist_employee, validate_plan
 from ..services import get_employee, list_employees, load_scope_plan
 
 router = APIRouter(prefix="/api/plan", tags=["plan"])
+
+
+def _http_value_error(exc: ValueError) -> HTTPException:
+    return HTTPException(400, str(exc))
+
+
+def _log_week_deltas(cur, emp: dict, year: int, deltas: list, user: dict) -> None:
+    for wk, old_days, new_days in deltas:
+        if old_days == new_days:
+            continue
+        log_change(
+            cur,
+            jefatura=emp["jefatura"],
+            year=year,
+            dni=emp["dni"],
+            nombre=emp["nombre"],
+            tipo=emp["tipo_personal"],
+            old_week=wk,
+            old_days=old_days,
+            new_week=wk,
+            new_days=new_days,
+            user=user,
+        )
 
 
 class WeekPatch(BaseModel):
@@ -43,8 +72,9 @@ class WeekPatch(BaseModel):
     @field_validator("days")
     @classmethod
     def days_in_week(cls, v: int) -> int:
-        if v < 0 or v > 7:
-            raise ValueError("Cada semana admite de 0 a 7 días.")
+        # 0 limpia; 1–DERECHO_ANUAL puede derramar a semanas siguientes.
+        if v < 0 or v > DERECHO_ANUAL:
+            raise ValueError(f"Indica entre 0 y {DERECHO_ANUAL} días.")
         return v
 
 
@@ -67,8 +97,8 @@ class ConsecutiveIn(BaseModel):
     @field_validator("days")
     @classmethod
     def days_range(cls, v: int) -> int:
-        if v < 1 or v > 90:
-            raise ValueError("Indica cuántos días son (entre 1 y 90).")
+        if v < 1 or v > DERECHO_ANUAL:
+            raise ValueError(f"Indica cuántos días son (entre 1 y {DERECHO_ANUAL}).")
         return v
 
     @field_validator("dni")
@@ -98,7 +128,7 @@ def get_plan(
     division: list[str] | None = Query(default=None),
     q: str = Query(default=""),
 ):
-    today = date.today()
+    today = today_lima()
     current_year, current_week, _ = today.isocalendar()
     with get_conn(write=False) as conn:
         cur = conn.cursor()
@@ -127,6 +157,7 @@ def get_plan(
 
     return {
         "year": year,
+        "today": today.isoformat(),
         "current_year": current_year,
         "current_week": current_week,
         "total_semanas": TOTAL_SEMANAS,
@@ -154,13 +185,23 @@ def week_detail(
             raise HTTPException(404, "Esa persona no aparece con el filtro actual.")
         daily_set, targets = load_scope_plan(cur, year, [emp])
     dates = week_dates(year, week)
+    today = today_lima()
     selected = [d.isoformat() for d in dates if key_daily(dni, d) in daily_set]
     return {
         "dni": dni,
         "week": week,
-        "locked": week_is_locked(year, week),
+        "today": today.isoformat(),
+        "locked": week_is_locked(year, week, today),
         "target": int(targets.get((dni, week), 0)),
-        "dates": [{"fecha": d.isoformat(), "weekday": d.weekday(), "selected": d.isoformat() in selected} for d in dates],
+        "dates": [
+            {
+                "fecha": d.isoformat(),
+                "weekday": d.weekday(),
+                "selected": d.isoformat() in selected,
+                "past": date_is_past(d, today),
+            }
+            for d in dates
+        ],
         "tipo": emp["tipo_personal"],
     }
 
@@ -177,20 +218,28 @@ def patch_week(body: WeekPatch, user: dict = Depends(get_current_user)):
         daily_set, targets = load_scope_plan(cur, body.year, [emp])
         old = int(targets.get((body.dni, body.week), 0))
         if body.days == 0:
-            apply_week_number(daily_set, body.dni, emp["tipo_personal"], body.week, 0, body.year)
+            clear_dates_for_week(daily_set, body.dni, body.year, body.week)
             targets.pop((body.dni, body.week), None)
             deltas = [(body.week, old, 0)]
-        elif body.days == 7:
-            apply_week_number(daily_set, body.dni, emp["tipo_personal"], body.week, 7, body.year)
-            targets[(body.dni, body.week)] = int(body.days)
-            deltas = [(body.week, old, body.days)]
         else:
             if not body.start_date:
-                raise HTTPException(400, "Si pones de 1 a 6 días, indica desde qué fecha empiezan.")
-            week_set = set(week_dates(body.year, body.week))
-            if body.start_date not in week_set:
+                raise HTTPException(400, "Si pones días de vacaciones, indica desde qué fecha empiezan.")
+            if body.start_date not in set(week_dates(body.year, body.week)):
                 raise HTTPException(400, f"La fecha debe caer en la semana {body.week}.")
             try:
+                reject_if_start_in_past(body.start_date)
+            except ValueError as exc:
+                raise _http_value_error(exc) from exc
+            # Saldo: al editar la semana se liberan sus días actuales antes de pedir N nuevos.
+            programados = count_year_days(daily_set, body.dni, body.year)
+            liberados = selected_count(daily_set, body.dni, week_dates(body.year, body.week))
+            programados_base = programados - liberados
+            try:
+                reject_if_exceeds_saldo(
+                    nombre=emp["nombre"],
+                    pedidas=body.days,
+                    programados_base=programados_base,
+                )
                 _, deltas = apply_consecutive_span(
                     daily_set,
                     targets,
@@ -201,25 +250,18 @@ def patch_week(body: WeekPatch, user: dict = Depends(get_current_user)):
                     body.year,
                     clear_week=body.week,
                 )
+                ensure_within_derecho(
+                    daily_set,
+                    body.dni,
+                    body.year,
+                    nombre=emp["nombre"],
+                    pedidas=body.days,
+                    programados_base=programados_base,
+                )
             except ValueError as exc:
-                raise HTTPException(400, str(exc)) from exc
+                raise _http_value_error(exc) from exc
         persist_employee(cur, body.year, emp, daily_set, targets, user["correo"])
-        for wk, old_days, new_days in deltas:
-            if old_days == new_days:
-                continue
-            log_change(
-                cur,
-                jefatura=emp["jefatura"],
-                year=body.year,
-                dni=body.dni,
-                nombre=emp["nombre"],
-                tipo=emp["tipo_personal"],
-                old_week=wk,
-                old_days=old_days,
-                new_week=wk,
-                new_days=new_days,
-                user=user,
-            )
+        _log_week_deltas(cur, emp, body.year, deltas, user)
     weeks = {str(wk): new for wk, _old, new in deltas}
     return {"ok": True, "weeks": weeks, "selected": weeks.get(str(body.week), 0)}
 
@@ -236,14 +278,37 @@ def patch_daily(body: DailyPatch, user: dict = Depends(get_current_user)):
         daily_set, targets = load_scope_plan(cur, body.year, [emp])
         clear_dates_for_week(daily_set, body.dni, body.year, body.week)
         allowed = set(week_dates(body.year, body.week))
-        modo = allowed_type(emp["tipo_personal"])
+        modo = allowed_type(emp["tipo_personal"], body.dni)
+        programados = count_year_days(daily_set, body.dni, body.year)
+        today = today_lima()
         for d in body.dates:
             if d not in allowed:
                 continue
+            if date_is_past(d, today):
+                raise HTTPException(
+                    400,
+                    f"No se puede marcar el {d.strftime('%d/%m/%Y')}: solo desde hoy hacia adelante.",
+                )
             if modo != "CALENDARIO" and not is_business_day(d):
                 continue
             daily_set.add(key_daily(body.dni, d))
         n = selected_count(daily_set, body.dni, week_dates(body.year, body.week))
+        try:
+            reject_if_exceeds_saldo(
+                nombre=emp["nombre"],
+                pedidas=n,
+                programados_base=programados,
+            )
+            ensure_within_derecho(
+                daily_set,
+                body.dni,
+                body.year,
+                nombre=emp["nombre"],
+                pedidas=n,
+                programados_base=programados,
+            )
+        except ValueError as exc:
+            raise _http_value_error(exc) from exc
         old = int(targets.get((body.dni, body.week), 0))
         if n:
             targets[(body.dni, body.week)] = min(n, 7)
@@ -251,19 +316,7 @@ def patch_daily(body: DailyPatch, user: dict = Depends(get_current_user)):
             targets.pop((body.dni, body.week), None)
         persist_employee(cur, body.year, emp, daily_set, targets, user["correo"])
         if old != n:
-            log_change(
-                cur,
-                jefatura=emp["jefatura"],
-                year=body.year,
-                dni=body.dni,
-                nombre=emp["nombre"],
-                tipo=emp["tipo_personal"],
-                old_week=body.week,
-                old_days=old,
-                new_week=body.week,
-                new_days=n,
-                user=user,
-            )
+            _log_week_deltas(cur, emp, body.year, [(body.week, old, n)], user)
     return {"ok": True, "days": n}
 
 
@@ -275,7 +328,13 @@ def consecutive(body: ConsecutiveIn, user: dict = Depends(get_current_user)):
         if not emp:
             raise HTTPException(404, "Esa persona no aparece con el filtro actual.")
         daily_set, targets = load_scope_plan(cur, body.year, [emp])
+        programados = count_year_days(daily_set, body.dni, body.year)
         try:
+            reject_if_exceeds_saldo(
+                nombre=emp["nombre"],
+                pedidas=body.days,
+                programados_base=programados,
+            )
             nuevas, deltas = apply_consecutive_span(
                 daily_set,
                 targets,
@@ -285,25 +344,18 @@ def consecutive(body: ConsecutiveIn, user: dict = Depends(get_current_user)):
                 body.days,
                 body.year,
             )
-        except ValueError as exc:
-            raise HTTPException(400, str(exc)) from exc
-        persist_employee(cur, body.year, emp, daily_set, targets, user["correo"])
-        for wk, old_days, new_days in deltas:
-            if old_days == new_days:
-                continue
-            log_change(
-                cur,
-                jefatura=emp["jefatura"],
-                year=body.year,
-                dni=body.dni,
+            ensure_within_derecho(
+                daily_set,
+                body.dni,
+                body.year,
                 nombre=emp["nombre"],
-                tipo=emp["tipo_personal"],
-                old_week=wk,
-                old_days=old_days,
-                new_week=wk,
-                new_days=new_days,
-                user=user,
+                pedidas=body.days,
+                programados_base=programados,
             )
+        except ValueError as exc:
+            raise _http_value_error(exc) from exc
+        persist_employee(cur, body.year, emp, daily_set, targets, user["correo"])
+        _log_week_deltas(cur, emp, body.year, deltas, user)
     return {
         "ok": True,
         "fechas": [d.isoformat() for d in nuevas],

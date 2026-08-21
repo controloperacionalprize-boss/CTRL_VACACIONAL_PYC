@@ -4,9 +4,11 @@ import re
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 
+from ..attendance_db import attendance_configured, fetch_attendance_dates
 from ..auth import get_current_user
 from ..db import get_conn
-from ..domain.export import build_record, employee_calendar_payload, export_excel
+from ..domain.employee_calendar import employee_calendar_payload
+from ..domain.export import build_record, export_excel
 from ..services import get_employee, list_employees, load_scope_plan
 
 router = APIRouter(prefix="/api", tags=["reports"])
@@ -31,7 +33,11 @@ def calendar_emp(
             (dni, year, inicio, fin),
         )
         fechas = [r["fecha"] for r in cur.fetchall() if isinstance(r["fecha"], date)]
-    return employee_calendar_payload(emp, year, sorted(fechas))
+    ok = attendance_configured()
+    asistencia = fetch_attendance_dates(dni, year) if ok else set()
+    return employee_calendar_payload(
+        emp, year, sorted(fechas), asistencia=asistencia, attendance_ok=ok
+    )
 
 
 @router.get("/export")

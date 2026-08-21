@@ -5,6 +5,10 @@ import { useApp } from "../state";
 import { Alert, Button, cn, EmptyState, Field, Input, Kpi, PageHeader } from "../components/ui";
 import { CalendarDays, CalendarPlus, Users, UserCheck, UserX } from "lucide-react";
 
+/** Derecho anual (mismo tope que backend DERECHO_ANUAL). */
+const MAX_VAC_DAYS = 30;
+const DAY_SHORT = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
+
 type Worker = {
   dni: string;
   nombre: string;
@@ -22,12 +26,15 @@ type Worker = {
 
 type Plan = {
   year: number;
+  today?: string;
   current_year: number;
   current_week: number;
   total_semanas: number;
   workers: Worker[];
   kpis: { trabajadores: number; programados: number; pendientes: number; dias: number };
 };
+
+type WeekDay = { fecha: string; weekday: number; selected: boolean; past?: boolean };
 
 function scope(filters: ReturnType<typeof useApp>["filters"]) {
   return {
@@ -55,6 +62,110 @@ function patchWorkerWeeks(workers: Worker[], dni: string, updates: Record<number
   });
 }
 
+function cellColor(val: number) {
+  if (!val) return "transparent";
+  return SEM_COLORS[Math.min(val, 7)] || SEM_COLORS[7];
+}
+
+function formatDayLabel(iso: string) {
+  const [, m, d] = iso.split("-");
+  return `${d}/${m}`;
+}
+
+/** Días que aún puede pedir: derecho − ya programados (base tras liberar semana, si aplica). */
+function diasDisponibles(programadosBase: number) {
+  return Math.max(0, MAX_VAC_DAYS - Math.max(0, programadosBase));
+}
+
+/** Alerta de saldo insuficiente (misma lógica/texto que el backend). */
+function msgSinSaldo(nombre: string, pedidas: number, programadosBase: number) {
+  const quien = nombre.trim() || "Este trabajador";
+  const disponibles = diasDisponibles(programadosBase);
+  if (disponibles <= 0) {
+    return `No se puede programar ${pedidas} día(s) para ${quien}: ya tiene los ${MAX_VAC_DAYS} días del derecho anual programados.`;
+  }
+  return `No se puede programar ${pedidas} día(s) para ${quien}: solo le quedan ${disponibles} día(s) disponible(s) (derecho ${MAX_VAC_DAYS}, ya programados ${programadosBase}).`;
+}
+
+function weeksFromApi(res: { weeks?: Record<string, number> }, fallbackWeek: number, fallbackDays: number) {
+  if (!res.weeks) return { [fallbackWeek]: fallbackDays } as Record<number, number>;
+  return Object.fromEntries(Object.entries(res.weeks).map(([k, v]) => [Number(k), v]));
+}
+
+/** YYYY-MM-DD local (calendario del navegador). */
+function localTodayIso() {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+/** Edición local; confirma solo con Enter o al salir de la celda. */
+const WeekInput = memo(function WeekInput({
+  value,
+  week,
+  worker,
+  onCommit,
+  className,
+}: {
+  value: number;
+  week: number;
+  worker: Worker;
+  onCommit: (w: Worker, week: number, days: number) => void;
+  className: string;
+}) {
+  const [draft, setDraft] = useState(String(value));
+  const committedRef = useRef(value);
+
+  useEffect(() => {
+    committedRef.current = value;
+    setDraft(String(value));
+  }, [value]);
+
+  function commit(raw: string) {
+    const prev = committedRef.current;
+    if (raw.trim() === "") {
+      setDraft(String(prev));
+      return;
+    }
+    const n = Number(raw);
+    if (!Number.isFinite(n)) {
+      setDraft(String(prev));
+      return;
+    }
+    const clamped = Math.max(0, Math.min(MAX_VAC_DAYS, Math.round(n)));
+    if (clamped !== prev) {
+      onCommit(worker, week, clamped);
+      // >7 no se pinta en la celda hasta guardar (derrame); mantener valor anterior a la vista.
+      if (clamped > 7) {
+        setDraft(String(prev));
+        return;
+      }
+    }
+    setDraft(String(clamped));
+  }
+
+  return (
+    <input
+      type="number"
+      min={0}
+      max={MAX_VAC_DAYS}
+      title={`0–${MAX_VAC_DAYS} días (más de 7 se reparte en semanas siguientes)`}
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onKeyDown={(e) => {
+        if (e.key !== "Enter") return;
+        e.preventDefault();
+        (e.target as HTMLInputElement).blur();
+      }}
+      onBlur={(e) => commit(e.target.value)}
+      className={className}
+      style={{ background: value ? cellColor(value) : "transparent" }}
+    />
+  );
+});
+
 const WorkerRow = memo(function WorkerRow({
   w,
   lockedWeeks,
@@ -76,7 +187,7 @@ const WorkerRow = memo(function WorkerRow({
       {w.weeks.map((val, idx) => {
         const week = idx + 1;
         const locked = lockedWeeks[idx];
-        const bg = val ? SEM_COLORS[val] : locked ? "var(--muted)" : "transparent";
+        const bg = val ? cellColor(val) : locked ? "var(--muted)" : "transparent";
         if (locked) {
           return (
             <td
@@ -90,19 +201,12 @@ const WorkerRow = memo(function WorkerRow({
         }
         return (
           <td key={week} className="border-b border-border p-0">
-            <input
-              type="number"
-              min={0}
-              max={7}
+            <WeekInput
               value={val}
-              onChange={(e) => {
-                const raw = e.target.value;
-                if (raw === "") return;
-                const n = Number(raw);
-                onDays(w, week, n);
-              }}
+              week={week}
+              worker={w}
+              onCommit={onDays}
               className="h-8 w-9 bg-transparent text-center text-[11px] font-medium outline-none"
-              style={{ background: bg }}
             />
           </td>
         );
@@ -145,7 +249,7 @@ const WorkerCard = memo(function WorkerCard({
           const idx = week - 1;
           const val = w.weeks[idx] || 0;
           const locked = lockedWeeks[idx];
-          const bg = val ? SEM_COLORS[val] : locked ? "var(--muted)" : "transparent";
+          const bg = val ? cellColor(val) : locked ? "var(--muted)" : "transparent";
           return (
             <label key={week} className="flex flex-col items-center gap-0.5">
               <span className="text-[9px] font-semibold text-muted-foreground">S{week}</span>
@@ -157,18 +261,12 @@ const WorkerCard = memo(function WorkerCard({
                   {val || "—"}
                 </span>
               ) : (
-                <input
-                  type="number"
-                  min={0}
-                  max={7}
+                <WeekInput
                   value={val}
-                  onChange={(e) => {
-                    const raw = e.target.value;
-                    if (raw === "") return;
-                    onDays(w, week, Number(raw));
-                  }}
+                  week={week}
+                  worker={w}
+                  onCommit={onDays}
                   className="h-9 w-full rounded-md border border-border text-center text-[11px] font-medium outline-none"
-                  style={{ background: bg }}
                 />
               )}
             </label>
@@ -186,10 +284,21 @@ export function PlanPage() {
   const deferredQ = useDeferredValue(q);
   const [error, setError] = useState("");
   const [ok, setOk] = useState("");
-  const [modal, setModal] = useState<{ dni: string; nombre: string; week: number; days: number; tipo: string } | null>(null);
+  const [modal, setModal] = useState<{
+    dni: string;
+    nombre: string;
+    week: number;
+    days: number;
+    prevDays: number;
+    disponibles: number;
+  } | null>(null);
   const [start, setStart] = useState("");
   const [modalError, setModalError] = useState("");
+  const [modalSaving, setModalSaving] = useState(false);
+  const [weekDays, setWeekDays] = useState<WeekDay[]>([]);
+  const [weekDaysLoading, setWeekDaysLoading] = useState(false);
   const [consec, setConsec] = useState({ dni: "", start: "", days: 6 });
+  const [consecSaving, setConsecSaving] = useState(false);
   const [consecQ, setConsecQ] = useState("");
   const [consecOpen, setConsecOpen] = useState(false);
   const deferredConsecQ = useDeferredValue(consecQ);
@@ -203,9 +312,11 @@ export function PlanPage() {
     setPlan(data);
     setLoadError("");
     const first = data.workers[0];
+    const minDay = data.today || localTodayIso();
     setConsec((c) => {
-      if (c.dni && data.workers.some((w) => w.dni === c.dni)) return c;
-      return { ...c, dni: first?.dni || "" };
+      const start = !c.start || c.start < minDay ? minDay : c.start;
+      if (c.dni && data.workers.some((w) => w.dni === c.dni)) return { ...c, start };
+      return { ...c, dni: first?.dni || "", start };
     });
     setConsecQ((q) => {
       if (q.trim()) return q;
@@ -289,8 +400,8 @@ export function PlanPage() {
     async (w: Worker, week: number, days: number, startDate?: string) => {
       setError("");
       setOk("");
-      if (Number.isNaN(days) || days < 0 || days > 7) {
-        const msg = "Cada semana admite de 0 a 7 días.";
+      if (Number.isNaN(days) || days < 0 || days > MAX_VAC_DAYS) {
+        const msg = `Indica entre 0 y ${MAX_VAC_DAYS} días.`;
         setError(msg);
         return msg;
       }
@@ -299,8 +410,8 @@ export function PlanPage() {
         setError(msg);
         return msg;
       }
-      if (days > 0 && days < 7 && !startDate) {
-        const msg = "Si pones de 1 a 6 días, indica desde qué fecha empiezan.";
+      if (days > 0 && !startDate) {
+        const msg = "Indica desde qué fecha empiezan las vacaciones.";
         setError(msg);
         return msg;
       }
@@ -315,20 +426,18 @@ export function PlanPage() {
             start_date: startDate || null,
           }),
         });
-        const updates: Record<number, number> = res.weeks
-          ? Object.fromEntries(Object.entries(res.weeks).map(([k, v]) => [Number(k), v]))
-          : { [week]: days };
+        const updates = weeksFromApi(res, week, days);
         applyLocalWeeks(w.dni, updates);
         const spill = Object.keys(updates).filter((k) => Number(k) !== week);
         setOk(
           days === 0
-            ? "Se quitaron las vacaciones de esa semana."
+            ? "Listo: se quitaron las vacaciones de esa semana."
             : spill.length
-              ? `Se guardaron ${days} día(s): ${Object.entries(updates)
+              ? `Listo: ${days} día(s) repartidos — ${Object.entries(updates)
                   .sort((a, b) => Number(a[0]) - Number(b[0]))
-                  .map(([wk, n]) => `S${wk} = ${n}`)
+                  .map(([wk, n]) => `S${wk}=${n}`)
                   .join(", ")}.`
-              : "Se guardaron los días de esa semana."
+              : `Listo: se guardaron ${days} día(s) en la semana ${week}.`
         );
         return "";
       } catch (e) {
@@ -342,22 +451,69 @@ export function PlanPage() {
 
   const onDays = useCallback(
     (w: Worker, week: number, days: number) => {
-      if (Number.isNaN(days)) {
-        setError("Cada semana admite de 0 a 7 días.");
+      if (Number.isNaN(days) || days < 0 || days > MAX_VAC_DAYS) {
+        setError(`Indica entre 0 y ${MAX_VAC_DAYS} días.`);
         return;
       }
-      const clamped = Math.max(0, Math.min(7, days));
-      if (clamped !== days) setError("Cada semana admite de 0 a 7 días.");
-      if (clamped > 0 && clamped < 7) {
-        setModalError("");
-        setStart("");
-        setModal({ dni: w.dni, nombre: w.nombre, week, days: clamped, tipo: w.tipo_personal });
+      const prevDays = w.weeks[week - 1] || 0;
+      if (days === 0) {
+        applyLocalWeeks(w.dni, { [week]: 0 });
+        void setWeek(w, week, 0).then((msg) => {
+          if (msg) applyLocalWeeks(w.dni, { [week]: prevDays });
+        });
         return;
       }
-      setWeek(w, week, clamped);
+      const programadosBase = Math.max(0, w.total_dias - prevDays);
+      const disponibles = diasDisponibles(programadosBase);
+      if (days > disponibles) {
+        setOk("");
+        setError(msgSinSaldo(w.nombre, days, programadosBase));
+        return;
+      }
+      setModalError("");
+      setStart("");
+      setWeekDays([]);
+      setError("");
+      setOk("");
+      // No pintar N>7 en una sola celda: el valor real llega al guardar (derrame).
+      if (days <= 7) applyLocalWeeks(w.dni, { [week]: days });
+      setModal({ dni: w.dni, nombre: w.nombre, week, days, prevDays, disponibles });
     },
-    [setWeek]
+    [applyLocalWeeks, setWeek]
   );
+
+  useEffect(() => {
+    if (!modal) return;
+    const { dni, week } = modal;
+    let cancelled = false;
+    setWeekDaysLoading(true);
+    api<{ dates: WeekDay[] }>(`/api/plan/week-detail${qs({ year: params.year, dni, week })}`)
+      .then((r) => {
+        if (cancelled) return;
+        const dates = r.dates || [];
+        setWeekDays(dates);
+        const firstOk = dates.find((d) => !d.past && !d.selected) || dates.find((d) => !d.past);
+        setStart(firstOk?.fecha || "");
+      })
+      .catch(() => {
+        if (!cancelled) setWeekDays([]);
+      })
+      .finally(() => {
+        if (!cancelled) setWeekDaysLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [modal?.dni, modal?.week, params.year]);
+
+  function closeModal(revert: boolean) {
+    if (modal && revert) applyLocalWeeks(modal.dni, { [modal.week]: modal.prevDays });
+    setModal(null);
+    setStart("");
+    setModalError("");
+    setModalSaving(false);
+    setWeekDays([]);
+  }
 
   async function programarConsec() {
     setError("");
@@ -370,8 +526,17 @@ export function PlanPage() {
       setError("Indica desde qué día empiezan las vacaciones.");
       return;
     }
-    if (!Number.isFinite(consec.days) || consec.days < 1 || consec.days > 90) {
-      setError("Indica cuántos días son (entre 1 y 90).");
+    if (!Number.isFinite(consec.days) || consec.days < 1 || consec.days > MAX_VAC_DAYS) {
+      setError(`Indica cuántos días son (entre 1 y ${MAX_VAC_DAYS}).`);
+      return;
+    }
+    const worker = plan?.workers.find((w) => w.dni === consec.dni);
+    if (!worker) {
+      setError("Esa persona ya no está en el filtro actual.");
+      return;
+    }
+    if (consec.days > diasDisponibles(worker.total_dias)) {
+      setError(msgSinSaldo(worker.nombre, consec.days, worker.total_dias));
       return;
     }
     const startDt = new Date(`${consec.start}T00:00:00`);
@@ -379,6 +544,14 @@ export function PlanPage() {
       setError("La fecha de inicio no es válida.");
       return;
     }
+    const todayIso = plan?.today || localTodayIso();
+    if (consec.start < todayIso) {
+      setError(
+        `No se puede programar desde una fecha anterior a hoy (${todayIso.slice(8, 10)}/${todayIso.slice(5, 7)}/${todayIso.slice(0, 4)}).`
+      );
+      return;
+    }
+    setConsecSaving(true);
     try {
       await api("/api/plan/consecutive", {
         method: "POST",
@@ -390,9 +563,11 @@ export function PlanPage() {
         }),
       });
       await load();
-      setOk(`Se programaron ${consec.days} día(s) desde el ${consec.start}.`);
+      setOk(`Listo: se programaron ${consec.days} día(s) desde el ${consec.start}.`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "No se pudieron guardar esas vacaciones.");
+    } finally {
+      setConsecSaving(false);
     }
   }
 
@@ -409,12 +584,25 @@ export function PlanPage() {
 
   if (!plan) return <p className="text-sm text-muted-foreground">Cargando plan…</p>;
 
+  const minProgramable = plan.today || localTodayIso();
+
   return (
     <div className="space-y-6">
       <PageHeader
         title="Planificación"
-        help={`Estás en la semana ${plan.current_week}. Las semanas anteriores no se pueden cambiar.`}
+        help={`Estás en la semana ${plan.current_week}. Solo se programan días desde hoy hacia adelante; semanas anteriores no se editan.`}
       />
+
+      {error ? (
+        <Alert tone="error" title="No se puede programar">
+          {error}
+        </Alert>
+      ) : null}
+      {ok ? (
+        <Alert tone="success" title="Guardado">
+          {ok}
+        </Alert>
+      ) : null}
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4 md:gap-4">
         <Kpi label="Trabajadores" value={plan.kpis.trabajadores} hint="Personas en este filtro" icon={<Users size={18} strokeWidth={1.75} />} />
@@ -465,20 +653,28 @@ export function PlanPage() {
           </div>
         </Field>
         <Field label="FECHA INICIO">
-          <Input type="date" value={consec.start} onChange={(e) => setConsec({ ...consec, start: e.target.value })} />
+          <Input
+            type="date"
+            min={minProgramable}
+            value={consec.start || minProgramable}
+            onChange={(e) => {
+              const v = e.target.value;
+              setConsec({ ...consec, start: v && v < minProgramable ? minProgramable : v });
+            }}
+          />
         </Field>
         <Field label="DÍAS">
           <Input
             type="number"
             min={1}
-            max={90}
+            max={MAX_VAC_DAYS}
             value={consec.days}
             onChange={(e) => setConsec({ ...consec, days: Number(e.target.value) })}
           />
         </Field>
-        <Button onClick={programarConsec} className="w-full md:w-auto">
+        <Button onClick={programarConsec} disabled={consecSaving} className="w-full md:w-auto">
           <CalendarPlus size={16} strokeWidth={1.75} />
-          Programar vacaciones
+          {consecSaving ? "Guardando…" : "Programar vacaciones"}
         </Button>
       </div>
 
@@ -498,17 +694,6 @@ export function PlanPage() {
           </span>
         ) : null}
       </div>
-
-      {error ? (
-        <Alert tone="error" title="No se pudo guardar">
-          {error}
-        </Alert>
-      ) : null}
-      {ok ? (
-        <Alert tone="success" title="Guardado">
-          {ok}
-        </Alert>
-      ) : null}
 
       {plan.workers.length === 0 ? (
         <EmptyState
@@ -587,47 +772,106 @@ export function PlanPage() {
 
       {modal ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--overlay)] p-4">
-          <div className="w-full max-w-[400px] rounded-xl border border-border bg-card shadow-[0_8px_24px_#1E2C3A14]">
+          <div className="w-full max-w-[440px] rounded-xl border border-border bg-card shadow-[0_8px_24px_#1E2C3A14]">
             <div className="space-y-1.5 px-5 pt-5">
               <h3 className="text-[15px] font-semibold">
-                Primer día de vacaciones · {modal.nombre} · semana {modal.week}
+                Semana {modal.week} · {modal.nombre}
               </h3>
               <p className="text-[13px] text-muted-foreground">
-                Indica el primer día de esas vacaciones. Debe caer en la semana {modal.week}.
+                Elige el día de inicio ·{" "}
+                <span className="font-semibold text-foreground">{modal.days}</span> día
+                {modal.days === 1 ? "" : "s"} · saldo{" "}
+                <span className="font-semibold text-foreground">{modal.disponibles}</span>/
+                {MAX_VAC_DAYS}
               </p>
             </div>
             <div className="space-y-3 px-5 py-3">
-              <Field label="FECHA DE INICIO">
-                <Input
-                  type="date"
-                  value={start}
-                  onChange={(e) => {
-                    setStart(e.target.value);
-                    setModalError("");
-                  }}
-                />
-              </Field>
+              <div>
+                <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  Día de inicio
+                </p>
+                {weekDaysLoading ? (
+                  <p className="text-[13px] text-muted-foreground">Cargando días…</p>
+                ) : weekDays.length === 0 ? (
+                  <Field label="FECHA DE INICIO">
+                    <Input
+                      type="date"
+                      min={minProgramable}
+                      value={start}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setStart(v && v < minProgramable ? minProgramable : v);
+                        setModalError("");
+                      }}
+                    />
+                  </Field>
+                ) : (
+                  <div className="grid grid-cols-7 gap-1">
+                    {weekDays.map((d) => {
+                      const active = start === d.fecha;
+                      const disabled = Boolean(d.past);
+                      return (
+                        <button
+                          key={d.fecha}
+                          type="button"
+                          title={disabled ? undefined : d.fecha}
+                          disabled={disabled}
+                          onClick={() => {
+                            if (disabled) return;
+                            setStart(d.fecha);
+                            setModalError("");
+                          }}
+                          className={cn(
+                            "flex flex-col items-center rounded-lg border px-0.5 py-1.5 text-center transition-colors",
+                            disabled
+                              ? "cursor-not-allowed border-border/60 bg-muted/40 text-muted-foreground opacity-45"
+                              : active
+                                ? "border-primary bg-[var(--primary-soft)] text-primary"
+                                : "border-border bg-background hover:bg-muted",
+                            d.selected && !active && !disabled ? "ring-1 ring-success/40" : ""
+                          )}
+                        >
+                          <span className="text-[9px] font-semibold text-muted-foreground">
+                            {DAY_SHORT[d.weekday] || "?"}
+                          </span>
+                          <span className="font-data text-[12px] font-semibold leading-tight">
+                            {formatDayLabel(d.fecha)}
+                          </span>
+                          {d.selected && !disabled ? (
+                            <span className="mt-0.5 text-[8px] text-success">ya</span>
+                          ) : (
+                            <span className="mt-0.5 text-[8px] text-transparent">·</span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+                {start ? (
+                  <p className="mt-2 text-[12px] text-muted-foreground">
+                    Inicio: <span className="font-data font-medium text-foreground">{formatDayLabel(start)}</span>
+                  </p>
+                ) : null}
+              </div>
               {modalError ? (
-                <Alert tone="error" title="Falta la fecha">
+                <Alert tone="error" title="No se pudo guardar">
                   {modalError}
                 </Alert>
               ) : null}
             </div>
             <div className="flex justify-end gap-2 px-5 pb-5">
-              <Button
-                variant="outline"
-                onClick={() => {
-                  setModal(null);
-                  setStart("");
-                  setModalError("");
-                }}
-              >
+              <Button variant="outline" disabled={modalSaving} onClick={() => closeModal(true)}>
                 Cancelar
               </Button>
               <Button
+                disabled={modalSaving}
                 onClick={async () => {
                   if (!start) {
-                    setModalError("Elige la fecha de inicio.");
+                    setModalError("Elige un día de inicio.");
+                    return;
+                  }
+                  if (weekDays.some((d) => d.fecha === start && d.past)) {
+                    setModalError("Ese día no está disponible.");
                     return;
                   }
                   const w = plan.workers.find((x) => x.dni === modal.dni);
@@ -635,17 +879,20 @@ export function PlanPage() {
                     setModalError("Esa persona ya no está en el filtro actual.");
                     return;
                   }
+                  setModalSaving(true);
+                  setModalError("");
                   const msg = await setWeek(w, modal.week, modal.days, start);
                   if (msg) {
                     setModalError(msg);
+                    applyLocalWeeks(modal.dni, { [modal.week]: modal.prevDays });
+                    setModalSaving(false);
                     return;
                   }
-                  setModal(null);
-                  setStart("");
-                  setModalError("");
+                  setModalSaving(false);
+                  closeModal(false);
                 }}
               >
-                Guardar
+                {modalSaving ? "Guardando…" : "Guardar"}
               </Button>
             </div>
           </div>

@@ -4,10 +4,12 @@ from datetime import date, datetime, timedelta
 from typing import Iterable
 from zoneinfo import ZoneInfo
 
-TIPOS_CALENDARIO = {"OPERATIVO"}
-TIPOS_HABILES = {"ADMINISTRATIVO", "SUBGERENCIA", "GERENCIA"}
+# Exclusiones futuras: DNIs que saltan   (solo lun–vie).
+DNI_SOLO_DIAS_HABILES: frozenset[str] = frozenset()
 MIN_DIAS = 0
 MAX_DIAS = 7
+# Derecho legal/planificado por año calendario ISO (misma cifra que UI calendario).
+DERECHO_ANUAL = 30
 TOTAL_SEMANAS = 53
 DIAS_SEMANA_CORTOS = ["L", "M", "M", "J", "V", "S", "D"]
 DIAS_ES = {
@@ -37,6 +39,11 @@ MESES_ES = {
 
 def now_lima() -> str:
     return datetime.now(ZoneInfo("America/Lima")).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def today_lima() -> date:
+    """Fecha de negocio (Lima); evita desfase UTC en servidores cloud."""
+    return datetime.now(ZoneInfo("America/Lima")).date()
 
 
 def iso_monday(year: int, week: int) -> date | None:
@@ -77,10 +84,9 @@ def parse_daily_key(item: str) -> tuple[str, date]:
     return dni, date.fromisoformat(fecha)
 
 
-def allowed_type(tipo: str) -> str:
-    # Oficina (admin / gerencia): lun–vie. El resto, incluido operativo y tipos
-    # no catalogados, toma sábados y domingo como días de vacaciones.
-    if str(tipo).upper().strip() in TIPOS_HABILES:
+def allowed_type(_tipo: str = "", dni: str | None = None) -> str:
+    """Todos: días corridos. Si dni ∈ DNI_SOLO_DIAS_HABILES → solo lun–vie."""
+    if dni is not None and str(dni).strip() in DNI_SOLO_DIAS_HABILES:
         return "HABIL"
     return "CALENDARIO"
 
@@ -96,16 +102,76 @@ def selected_count(daily_set: set[str], dni: str, dates: Iterable[date]) -> int:
     return sum(key_daily(dni, d) in daily_set for d in dates)
 
 
+def count_year_days(daily_set: set[str], dni: str, year: int) -> int:
+    """Días de vacaciones del trabajador en el año ISO del plan."""
+    prefix = f"{dni}|"
+    n = 0
+    for item in daily_set:
+        if not item.startswith(prefix):
+            continue
+        _, d = parse_daily_key(item)
+        if d.isocalendar()[0] == year:
+            n += 1
+    return n
+
+
+def mensaje_sin_saldo(nombre: str, pedidas: int, programados: int, derecho: int = DERECHO_ANUAL) -> str:
+    """Texto de error cuando el pedido supera el saldo del año."""
+    quien = (nombre or "").strip() or "Este trabajador"
+    disponibles = max(derecho - programados, 0)
+    if disponibles <= 0:
+        return (
+            f"No se puede programar {pedidas} día(s) para {quien}: "
+            f"ya tiene los {derecho} días del derecho anual programados."
+        )
+    return (
+        f"No se puede programar {pedidas} día(s) para {quien}: "
+        f"solo le quedan {disponibles} día(s) disponible(s) "
+        f"(derecho {derecho}, ya programados {programados})."
+    )
+
+
+def saldo_disponible(programados: int, derecho: int = DERECHO_ANUAL) -> int:
+    return max(0, derecho - max(0, programados))
+
+
+def reject_if_exceeds_saldo(
+    *,
+    nombre: str,
+    pedidas: int,
+    programados_base: int,
+) -> None:
+    """Rechazo rápido antes de mutar el plan (misma regla que ensure_within_derecho)."""
+    if pedidas > saldo_disponible(programados_base):
+        raise ValueError(mensaje_sin_saldo(nombre, pedidas, programados_base))
+
+
+def ensure_within_derecho(
+    daily_set: set[str],
+    dni: str,
+    year: int,
+    *,
+    nombre: str,
+    pedidas: int,
+    programados_base: int,
+) -> None:
+    """Falla si tras el cambio el año supera DERECHO_ANUAL."""
+    if count_year_days(daily_set, dni, year) > DERECHO_ANUAL:
+        raise ValueError(mensaje_sin_saldo(nombre, pedidas, programados_base))
+
+
 def clear_dates_for_week(daily_set: set[str], dni: str, year: int, week: int) -> None:
     for d in week_dates(year, week):
         daily_set.discard(key_daily(dni, d))
 
 
-def compute_consecutive_dates(tipo: str, start_date: date, number_of_days: int) -> list[date]:
+def compute_consecutive_dates(
+    tipo: str, start_date: date, number_of_days: int, dni: str | None = None
+) -> list[date]:
     number_of_days = int(number_of_days)
     if number_of_days <= 0:
         return []
-    modo = allowed_type(tipo)
+    modo = allowed_type(tipo, dni)
     d = start_date
     dates: list[date] = []
     while len(dates) < number_of_days:
@@ -113,31 +179,6 @@ def compute_consecutive_dates(tipo: str, start_date: date, number_of_days: int) 
             dates.append(d)
         d += timedelta(days=1)
     return dates
-
-
-def apply_week_number(
-    daily_set: set[str],
-    dni: str,
-    tipo: str,
-    week: int,
-    value: int,
-    year: int,
-) -> None:
-    value = max(MIN_DIAS, min(MAX_DIAS, int(value)))
-    clear_dates_for_week(daily_set, dni, year, week)
-    dates = week_dates(year, week)
-    if not dates or value == 0:
-        return
-    modo = allowed_type(tipo)
-    if value < 7:
-        return
-    if modo == "CALENDARIO":
-        for d in dates:
-            daily_set.add(key_daily(dni, d))
-    else:
-        for d in dates:
-            if is_business_day(d):
-                daily_set.add(key_daily(dni, d))
 
 
 def reconcile_targets_with_daily(
@@ -204,6 +245,16 @@ def group_consecutive_dates(dates_sorted: list[date]) -> list[tuple[date, date]]
     return periods
 
 
+def reject_if_start_in_past(start_date: date, today: date | None = None) -> None:
+    """No se programa vacaciones con inicio anterior a hoy."""
+    today = today or today_lima()
+    if start_date < today:
+        raise ValueError(
+            f"No se puede programar desde el {start_date.strftime('%d/%m/%Y')}: "
+            f"solo desde hoy ({today.strftime('%d/%m/%Y')}) hacia adelante."
+        )
+
+
 def apply_consecutive_span(
     daily_set: set[str],
     targets: dict[tuple[str, int], int],
@@ -213,16 +264,19 @@ def apply_consecutive_span(
     number_of_days: int,
     year: int,
     clear_week: int | None = None,
+    today: date | None = None,
 ) -> tuple[list[date], list[tuple[int, int, int]]]:
-    """Marca N días seguidos (según tipo) y actualiza el número de cada semana tocada."""
+    """Marca N días seguidos y actualiza el número de cada semana tocada."""
+    today = today or today_lima()
+    reject_if_start_in_past(start_date, today)
     if clear_week is not None:
         clear_dates_for_week(daily_set, dni, year, clear_week)
-    fechas = compute_consecutive_dates(tipo, start_date, number_of_days)
+    fechas = compute_consecutive_dates(tipo, start_date, number_of_days, dni)
     in_year = [d for d in fechas if d.isocalendar()[0] == year]
     weeks = sorted({d.isocalendar()[1] for d in in_year})
     if clear_week is not None and clear_week not in weeks:
         weeks = sorted([clear_week, *weeks])
-    locked = [wk for wk in weeks if week_is_locked(year, wk)]
+    locked = [wk for wk in weeks if week_is_locked(year, wk, today)]
     if locked:
         raise ValueError(
             f"La semana {locked[0]} ya pasó y no se puede cambiar."
@@ -245,10 +299,16 @@ def apply_consecutive_span(
 
 
 def week_is_locked(year: int, week: int, today: date | None = None) -> bool:
-    today = today or date.today()
+    today = today or today_lima()
     current_year, current_week, _ = today.isocalendar()
     if year < current_year:
         return True
     if year == current_year and week < current_week:
         return True
     return False
+
+
+def date_is_past(d: date, today: date | None = None) -> bool:
+    """True si el día ya pasó (hoy sí se puede programar)."""
+    today = today or today_lima()
+    return d < today

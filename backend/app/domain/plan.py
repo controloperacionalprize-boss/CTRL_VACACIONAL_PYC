@@ -125,7 +125,7 @@ def validate_plan(employees, targets, daily_set, year, today: date | None = None
 
     for w in employees:
         dni = str(w["dni"])
-        modo = allowed_type(w["tipo_personal"])
+        modo = allowed_type(w["tipo_personal"], dni)
         for week in range(1, TOTAL_SEMANAS + 1):
             if week_is_locked(year, week, today):
                 continue
@@ -204,7 +204,7 @@ def group_periods(employees, daily_set: set[str], year: int):
     result = []
     for dni, dates in by_dni.items():
         w = emp[dni]
-        calendar_days = allowed_type(w["tipo_personal"]) == "CALENDARIO"
+        calendar_days = allowed_type(w["tipo_personal"], str(w["dni"])) == "CALENDARIO"
         dates = sorted(dates)
         group_id = 0
         groups: dict[int, list[date]] = defaultdict(list)

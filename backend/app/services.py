@@ -4,6 +4,7 @@ from datetime import date
 
 from .domain.calendar import reconcile_targets_with_daily
 from .domain.plan import load_plan_for_year
+from .photos import enrich_employee_photo
 
 EMP_COLS = (
     "dni, nombre, empresa, division, gerencia, area, jefatura, "
@@ -13,7 +14,7 @@ EMP_COLS = (
 
 def employee_from_row(row) -> dict:
     fi = row["fecha_ingreso"]
-    return {
+    emp = {
         "dni": str(row["dni"]),
         "nombre": row["nombre"],
         "empresa": row["empresa"],
@@ -26,6 +27,7 @@ def employee_from_row(row) -> dict:
         "tipo_personal": row["tipo_personal"],
         "activo": bool(row["activo"]),
     }
+    return enrich_employee_photo(emp)
 
 
 def _scope_sql(user: dict, empresa, gerencia, division, q: str | None = None) -> tuple[str, list]:

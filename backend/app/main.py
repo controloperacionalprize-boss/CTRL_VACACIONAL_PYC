@@ -6,6 +6,7 @@ from fastapi.responses import JSONResponse
 
 from .config import get_settings
 from .db import check_connection, close_pool
+from .attendance_db import close_attendance_pool
 from .routers.admin import router as admin_router
 from .routers.auth import router as auth_router
 from .routers.catalog import router as catalog_router
@@ -14,13 +15,14 @@ from .routers.plan import router as plan_router
 from .routers.reports import router as reports_router
 
 # Cambia con cada fix de deploy para verificar en /api/version qué código está vivo.
-DEPLOY_MARK = "head-fix-v3"
+DEPLOY_MARK = "pictures-photos-v1"
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     yield
     close_pool()
+    close_attendance_pool()
 
 
 settings = get_settings()
