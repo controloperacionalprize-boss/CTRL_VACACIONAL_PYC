@@ -4,11 +4,10 @@ import { useApp } from "../state";
 import { Alert, Button, Icon, PageHeader } from "../components/ui";
 
 const SHEETS = [
-  ["Resumen", "Totales y riesgos del equipo que estás viendo"],
-  ["Vacaciones", "Las vacaciones de cada persona"],
-  ["Detalle diario", "Un renglón por cada día de vacaciones"],
-  ["Plan semanal", "Cuántos días hay en cada semana del año"],
-  ["Historial", "Record vacacional: gozados, pendientes y vencimiento"],
+  ["Resumen", "Totales del equipo que estás viendo"],
+  ["Planificación", "Misma grilla de la web: nombre, DNI, área, tipo, total y semanas"],
+  ["Periodos", "Tramos de vacaciones (inicio, fin y días), no por semana"],
+  ["Récord vacacional", "Calculado con fecha de ingreso (maestro) y días programados (cronograma)"],
   ["Cambios", "Quién modificó el plan y cuándo"],
 ] as const;
 

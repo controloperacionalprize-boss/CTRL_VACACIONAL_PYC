@@ -233,9 +233,8 @@ def group_periods(employees, daily_set: set[str], year: int):
                 "fecha_inicio": gdates[0].isoformat(),
                 "fecha_fin": gdates[-1].isoformat(),
                 "dias": len(gdates),
-                "semana": int(gdates[0].isocalendar()[1]),
             })
-    result.sort(key=lambda r: (r["semana"], r["gerencia"], r["area"], r["nombre"]))
+    result.sort(key=lambda r: (r["fecha_inicio"], r["gerencia"], r["area"], r["nombre"]))
     return result
 
 

@@ -3,7 +3,7 @@ import { api, qs } from "../api";
 import { SEM_COLORS, weekLocked } from "../lib/semaforo";
 import { useApp } from "../state";
 import { Alert, Button, cn, EmptyState, Field, Input, Kpi, PageHeader } from "../components/ui";
-import { CalendarDays, CalendarPlus, Users, UserCheck, UserX } from "lucide-react";
+import { CalendarClock, CalendarDays, CalendarPlus, CalendarRange, Users, UserCheck, UserX } from "lucide-react";
 
 /** Derecho anual (mismo tope que backend DERECHO_ANUAL). */
 const MAX_VAC_DAYS = 30;
@@ -22,6 +22,51 @@ type Worker = {
   weeks: number[];
   total_dias: number;
   cambios: number;
+  /** false = aún no cumple el año; solo puede pedir adelanto hasta tope_dias. */
+  record_cumplido?: boolean;
+  /** Tope real programable: 30 si ya cumplió el récord, o lo acumulado (adelanto) si no. */
+  tope_dias?: number;
+};
+
+/** Tope real de un trabajador: 30 si ya cumplió el récord, o lo acumulado (adelanto). */
+function topeDe(w: Pick<Worker, "tope_dias"> | null | undefined) {
+  return w?.tope_dias ?? MAX_VAC_DAYS;
+}
+
+function esAdelanto<T extends Pick<Worker, "record_cumplido">>(
+  w: T | null | undefined
+): w is T & { record_cumplido: false } {
+  return w != null && w.record_cumplido === false;
+}
+
+function formatFechaIso(iso: string | null | undefined) {
+  if (!iso) return "—";
+  const [y, m, d] = iso.split("-");
+  if (!y || !m || !d) return iso;
+  return `${d}/${m}/${y}`;
+}
+
+function addDaysIso(iso: string, extra: number) {
+  const d = new Date(`${iso}T00:00:00`);
+  d.setDate(d.getDate() + extra);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function etiquetaEstado(estado: string) {
+  if (estado === "gozado") return "Gozado";
+  if (estado === "en_curso") return "En curso";
+  return "Programado";
+}
+
+type VacPeriod = {
+  inicio: string;
+  fin: string;
+  dias: number;
+  estado: string;
+  editable: boolean;
 };
 
 type Plan = {
@@ -72,19 +117,21 @@ function formatDayLabel(iso: string) {
   return `${d}/${m}`;
 }
 
-/** Días que aún puede pedir: derecho − ya programados (base tras liberar semana, si aplica). */
-function diasDisponibles(programadosBase: number) {
-  return Math.max(0, MAX_VAC_DAYS - Math.max(0, programadosBase));
+/** Días que aún puede pedir: tope (30, o acumulado si es adelanto) − ya programados. */
+function diasDisponibles(programadosBase: number, tope: number = MAX_VAC_DAYS) {
+  return Math.max(0, tope - Math.max(0, programadosBase));
 }
 
 /** Alerta de saldo insuficiente (misma lógica/texto que el backend). */
-function msgSinSaldo(nombre: string, pedidas: number, programadosBase: number) {
+function msgSinSaldo(nombre: string, pedidas: number, programadosBase: number, tope: number = MAX_VAC_DAYS, adelanto = false) {
   const quien = nombre.trim() || "Este trabajador";
-  const disponibles = diasDisponibles(programadosBase);
+  const disponibles = diasDisponibles(programadosBase, tope);
+  const etiqueta = adelanto ? "acumulado para adelanto" : "derecho anual";
   if (disponibles <= 0) {
-    return `No se puede programar ${pedidas} día(s) para ${quien}: ya tiene los ${MAX_VAC_DAYS} días del derecho anual programados.`;
+    const extra = adelanto ? " (aún no cumple el año)" : "";
+    return `No se puede programar ${pedidas} día(s) para ${quien}: ya tiene los ${tope} días de ${etiqueta} programados${extra}.`;
   }
-  return `No se puede programar ${pedidas} día(s) para ${quien}: solo le quedan ${disponibles} día(s) disponible(s) (derecho ${MAX_VAC_DAYS}, ya programados ${programadosBase}).`;
+  return `No se puede programar ${pedidas} día(s) para ${quien}: solo le quedan ${disponibles} día(s) disponible(s) (${etiqueta} ${tope}, ya programados ${programadosBase}).`;
 }
 
 function weeksFromApi(res: { weeks?: Record<string, number> }, fallbackWeek: number, fallbackDays: number) {
@@ -291,6 +338,7 @@ export function PlanPage() {
     days: number;
     prevDays: number;
     disponibles: number;
+    tope: number;
   } | null>(null);
   const [start, setStart] = useState("");
   const [modalError, setModalError] = useState("");
@@ -303,6 +351,15 @@ export function PlanPage() {
   const [consecOpen, setConsecOpen] = useState(false);
   const deferredConsecQ = useDeferredValue(consecQ);
   const consecBoxRef = useRef<HTMLDivElement>(null);
+  const adelantoBoxRef = useRef<HTMLDivElement>(null);
+  const [adelantoOpen, setAdelantoOpen] = useState(false);
+  const [adelantoError, setAdelantoError] = useState("");
+  const [modificarOpen, setModificarOpen] = useState(false);
+  const [modificarError, setModificarError] = useState("");
+  const [periodos, setPeriodos] = useState<VacPeriod[]>([]);
+  const [periodosLoading, setPeriodosLoading] = useState(false);
+  const [periodoSel, setPeriodoSel] = useState("");
+  const [modStart, setModStart] = useState("");
   const [loadError, setLoadError] = useState("");
 
   const params = useMemo(() => scope(filters), [filters]);
@@ -330,7 +387,8 @@ export function PlanPage() {
 
   useEffect(() => {
     function onDocClick(e: MouseEvent) {
-      if (!consecBoxRef.current?.contains(e.target as Node)) setConsecOpen(false);
+      const t = e.target as Node;
+      if (!consecBoxRef.current?.contains(t) && !adelantoBoxRef.current?.contains(t)) setConsecOpen(false);
     }
     document.addEventListener("mousedown", onDocClick);
     return () => document.removeEventListener("mousedown", onDocClick);
@@ -382,11 +440,40 @@ export function PlanPage() {
       .slice(0, 12);
   }, [deferredConsecQ, plan?.workers]);
 
+  const consecWorker = useMemo(
+    () => plan?.workers.find((w) => w.dni === consec.dni) || null,
+    [plan?.workers, consec.dni]
+  );
+
   function pickConsec(w: Worker) {
     setConsec((c) => ({ ...c, dni: w.dni }));
     setConsecQ(`${w.nombre} · ${w.dni}`);
     setConsecOpen(false);
+    setPeriodoSel("");
   }
+
+  useEffect(() => {
+    if (!modificarOpen || !consec.dni) {
+      setPeriodos([]);
+      return;
+    }
+    let cancelled = false;
+    setPeriodosLoading(true);
+    api<{ periodos: VacPeriod[] }>(`/api/plan/periods${qs({ year: params.year, dni: consec.dni })}`)
+      .then((r) => {
+        if (cancelled) return;
+        setPeriodos(r.periodos || []);
+      })
+      .catch(() => {
+        if (!cancelled) setPeriodos([]);
+      })
+      .finally(() => {
+        if (!cancelled) setPeriodosLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [modificarOpen, consec.dni, params.year]);
 
   const applyLocalWeeks = useCallback((dni: string, updates: Record<number, number>) => {
     setPlan((p) => {
@@ -451,6 +538,13 @@ export function PlanPage() {
 
   const onDays = useCallback(
     (w: Worker, week: number, days: number) => {
+      if (esAdelanto(w) && days > 0) {
+        setOk("");
+        setError(
+          `${w.nombre} aún no cumple el año de servicio. Programa esos días con Adelanto vacacional.`
+        );
+        return;
+      }
       if (Number.isNaN(days) || days < 0 || days > MAX_VAC_DAYS) {
         setError(`Indica entre 0 y ${MAX_VAC_DAYS} días.`);
         return;
@@ -464,10 +558,10 @@ export function PlanPage() {
         return;
       }
       const programadosBase = Math.max(0, w.total_dias - prevDays);
-      const disponibles = diasDisponibles(programadosBase);
+      const disponibles = diasDisponibles(programadosBase, MAX_VAC_DAYS);
       if (days > disponibles) {
         setOk("");
-        setError(msgSinSaldo(w.nombre, days, programadosBase));
+        setError(msgSinSaldo(w.nombre, days, programadosBase, MAX_VAC_DAYS, false));
         return;
       }
       setModalError("");
@@ -477,7 +571,7 @@ export function PlanPage() {
       setOk("");
       // No pintar N>7 en una sola celda: el valor real llega al guardar (derrame).
       if (days <= 7) applyLocalWeeks(w.dni, { [week]: days });
-      setModal({ dni: w.dni, nombre: w.nombre, week, days, prevDays, disponibles });
+      setModal({ dni: w.dni, nombre: w.nombre, week, days, prevDays, disponibles, tope: MAX_VAC_DAYS });
     },
     [applyLocalWeeks, setWeek]
   );
@@ -526,17 +620,21 @@ export function PlanPage() {
       setError("Indica desde qué día empiezan las vacaciones.");
       return;
     }
-    if (!Number.isFinite(consec.days) || consec.days < 1 || consec.days > MAX_VAC_DAYS) {
-      setError(`Indica cuántos días son (entre 1 y ${MAX_VAC_DAYS}).`);
-      return;
-    }
     const worker = plan?.workers.find((w) => w.dni === consec.dni);
     if (!worker) {
       setError("Esa persona ya no está en el filtro actual.");
       return;
     }
-    if (consec.days > diasDisponibles(worker.total_dias)) {
-      setError(msgSinSaldo(worker.nombre, consec.days, worker.total_dias));
+    if (esAdelanto(worker)) {
+      setError(`${worker.nombre} aún no cumple el año de servicio. Usa Adelanto vacacional.`);
+      return;
+    }
+    if (!Number.isFinite(consec.days) || consec.days < 1 || consec.days > MAX_VAC_DAYS) {
+      setError(`Indica cuántos días son (entre 1 y ${MAX_VAC_DAYS}).`);
+      return;
+    }
+    if (consec.days > diasDisponibles(worker.total_dias, MAX_VAC_DAYS)) {
+      setError(msgSinSaldo(worker.nombre, consec.days, worker.total_dias, MAX_VAC_DAYS, false));
       return;
     }
     const startDt = new Date(`${consec.start}T00:00:00`);
@@ -553,6 +651,66 @@ export function PlanPage() {
     }
     setConsecSaving(true);
     try {
+      const res = await api<{ fechas?: string[]; fin?: string }>("/api/plan/consecutive", {
+        method: "POST",
+        body: JSON.stringify({
+          ...params,
+          dni: consec.dni,
+          start_date: consec.start,
+          days: consec.days,
+        }),
+      });
+      await load();
+      const fin = res.fin || (res.fechas && res.fechas[res.fechas.length - 1]) || "";
+      setOk(
+        fin
+          ? `Listo: se programaron ${consec.days} día(s) del ${formatFechaIso(consec.start)} al ${formatFechaIso(fin)}.`
+          : `Listo: se programaron ${consec.days} día(s) desde el ${consec.start}.`
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "No se pudieron guardar esas vacaciones.");
+    } finally {
+      setConsecSaving(false);
+    }
+  }
+
+  async function guardarAdelanto() {
+    setAdelantoError("");
+    if (!consec.dni) {
+      setAdelantoError("Selecciona a la persona.");
+      return;
+    }
+    if (!consec.start) {
+      setAdelantoError("Indica desde qué día empiezan las vacaciones.");
+      return;
+    }
+    const worker = plan?.workers.find((w) => w.dni === consec.dni);
+    if (!worker) {
+      setAdelantoError("Esa persona ya no está en el filtro actual.");
+      return;
+    }
+    if (!esAdelanto(worker)) {
+      setAdelantoError(
+        `${worker.nombre} ya cumplió el año de servicio. Programa vacaciones normales (hasta ${MAX_VAC_DAYS} días).`
+      );
+      return;
+    }
+    const tope = topeDe(worker);
+    if (!Number.isFinite(consec.days) || consec.days < 1 || consec.days > tope) {
+      setAdelantoError(`Indica cuántos días son (entre 1 y ${tope}, según lo acumulado).`);
+      return;
+    }
+    if (consec.days > diasDisponibles(worker.total_dias, tope)) {
+      setAdelantoError(msgSinSaldo(worker.nombre, consec.days, worker.total_dias, tope, true));
+      return;
+    }
+    const todayIso = plan?.today || localTodayIso();
+    if (consec.start < todayIso) {
+      setAdelantoError("No se puede programar desde una fecha anterior a hoy.");
+      return;
+    }
+    setConsecSaving(true);
+    try {
       await api("/api/plan/consecutive", {
         method: "POST",
         body: JSON.stringify({
@@ -563,9 +721,68 @@ export function PlanPage() {
         }),
       });
       await load();
-      setOk(`Listo: se programaron ${consec.days} día(s) desde el ${consec.start}.`);
+      setAdelantoOpen(false);
+      setOk(
+        `Listo: se adelantaron ${consec.days} día(s) para ${worker.nombre} desde el ${consec.start} (tope acumulado ${tope}).`
+      );
+      setError("");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "No se pudieron guardar esas vacaciones.");
+      setAdelantoError(e instanceof Error ? e.message : "No se pudo guardar el adelanto.");
+    } finally {
+      setConsecSaving(false);
+    }
+  }
+
+  async function guardarModificar() {
+    setModificarError("");
+    if (!consec.dni) {
+      setModificarError("Selecciona a la persona.");
+      return;
+    }
+    if (!periodoSel) {
+      setModificarError("Elige el período que quieres mover.");
+      return;
+    }
+    if (!modStart) {
+      setModificarError("Indica la nueva fecha de inicio.");
+      return;
+    }
+    const periodo = periodos.find((p) => p.inicio === periodoSel);
+    if (!periodo) {
+      setModificarError("Ese período ya no está disponible.");
+      return;
+    }
+    if (!periodo.editable) {
+      setModificarError("Ese período ya comenzó o ya fue gozado; no se puede cambiar.");
+      return;
+    }
+    const todayIso = plan?.today || localTodayIso();
+    if (modStart < todayIso) {
+      setModificarError("La nueva fecha no puede ser anterior a hoy.");
+      return;
+    }
+    setConsecSaving(true);
+    try {
+      const res = await api<{ fin?: string }>("/api/plan/period-move", {
+        method: "POST",
+        body: JSON.stringify({
+          year: params.year,
+          dni: consec.dni,
+          old_start: periodoSel,
+          new_start: modStart,
+          days: periodo.dias,
+        }),
+      });
+      await load();
+      setModificarOpen(false);
+      setOk(
+        `Listo: el período de ${periodo.dias} día(s) pasó del ${formatFechaIso(periodo.inicio)} al ${formatFechaIso(modStart)}` +
+          (res.fin ? ` (termina ${formatFechaIso(res.fin)})` : "") +
+          ". El saldo no se volvió a descontar."
+      );
+      setError("");
+    } catch (e) {
+      setModificarError(e instanceof Error ? e.message : "No se pudo modificar el período.");
     } finally {
       setConsecSaving(false);
     }
@@ -585,6 +802,8 @@ export function PlanPage() {
   if (!plan) return <p className="text-sm text-muted-foreground">Cargando plan…</p>;
 
   const minProgramable = plan.today || localTodayIso();
+  const finEstimado =
+    consec.start && consec.days > 0 ? addDaysIso(consec.start, consec.days - 1) : "";
 
   return (
     <div className="space-y-6">
@@ -611,7 +830,7 @@ export function PlanPage() {
         <Kpi label="Días programados" value={plan.kpis.dias} hint="Suma de todas las semanas" icon={<CalendarDays size={18} strokeWidth={1.75} />} />
       </div>
 
-      <div className="grid grid-cols-1 items-end gap-3 rounded-xl border border-border bg-card p-4 shadow-[var(--shadow-card)] sm:grid-cols-2 md:grid-cols-[2fr_1fr_1fr_auto]">
+      <div className="grid grid-cols-1 items-end gap-3 rounded-xl border border-border bg-card p-4 shadow-[var(--shadow-card)] sm:grid-cols-2 md:grid-cols-[2fr_1fr_1fr]">
         <Field label="TRABAJADOR" className="sm:col-span-2 md:col-span-1">
           <div ref={consecBoxRef} className="relative">
             <Input
@@ -672,10 +891,51 @@ export function PlanPage() {
             onChange={(e) => setConsec({ ...consec, days: Number(e.target.value) })}
           />
         </Field>
-        <Button onClick={programarConsec} disabled={consecSaving} className="w-full md:w-auto">
-          <CalendarPlus size={16} strokeWidth={1.75} />
-          {consecSaving ? "Guardando…" : "Programar vacaciones"}
-        </Button>
+        <div className="flex flex-col gap-2 sm:col-span-2 sm:flex-row md:col-span-3">
+          <Button onClick={programarConsec} disabled={consecSaving} className="w-full md:w-auto">
+            <CalendarPlus size={16} strokeWidth={1.75} />
+            {consecSaving && !adelantoOpen ? "Guardando…" : "Programar vacaciones"}
+          </Button>
+          <Button
+            variant="outline"
+            disabled={consecSaving}
+            className="w-full md:w-auto"
+            onClick={() => {
+              setAdelantoError("");
+              setError("");
+              setOk("");
+              setAdelantoOpen(true);
+            }}
+          >
+            <CalendarClock size={16} strokeWidth={1.75} />
+            Adelanto vacacional
+          </Button>
+          <Button
+            variant="outline"
+            disabled={consecSaving}
+            className="w-full md:w-auto"
+            onClick={() => {
+              setModificarError("");
+              setError("");
+              setOk("");
+              setPeriodoSel("");
+              setModStart(minProgramable);
+              setModificarOpen(true);
+            }}
+          >
+            <CalendarRange size={16} strokeWidth={1.75} />
+            Modificar período
+          </Button>
+        </div>
+        {finEstimado ? (
+          <p className="text-[12px] text-muted-foreground sm:col-span-2 md:col-span-3">
+            Termina el {formatFechaIso(finEstimado)}
+            {consec.days === MAX_VAC_DAYS ? " · goce completo" : " · fraccionamiento si ya hay otros tramos"}
+          </p>
+        ) : null}
+        <p className="text-[11px] text-muted-foreground sm:col-span-2 md:col-span-3">
+          Art. 8: un bloque de 15 días corridos, o 7+8. El resto, desde 1 día. Sin cruces de fechas.
+        </p>
       </div>
 
       <div className="flex w-full max-w-sm items-center gap-2">
@@ -770,6 +1030,220 @@ export function PlanPage() {
         ))}
       </div>
 
+      {adelantoOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--overlay)] p-4">
+          <div className="w-full max-w-[480px] rounded-xl border border-border bg-card shadow-[0_8px_24px_#1E2C3A14]">
+            <div className="space-y-1.5 px-5 pt-5">
+              <h3 className="text-[15px] font-semibold">Adelanto vacacional</h3>
+              <p className="text-[13px] text-muted-foreground">
+                Solo si aún no cumple el año. El tope es 2.5 días por mes trabajado.
+              </p>
+            </div>
+            <div className="space-y-3 px-5 py-3">
+              <Field label="TRABAJADOR">
+                <div ref={adelantoBoxRef} className="relative">
+                  <Input
+                    type="search"
+                    autoComplete="off"
+                    spellCheck={false}
+                    placeholder="Buscar nombre o DNI…"
+                    value={consecQ}
+                    onChange={(e) => {
+                      setConsecQ(e.target.value);
+                      setConsecOpen(true);
+                      if (!e.target.value.trim()) setConsec((c) => ({ ...c, dni: "" }));
+                    }}
+                    onFocus={() => setConsecOpen(true)}
+                  />
+                  {consecOpen ? (
+                    <div className="absolute z-30 mt-1 max-h-56 w-full overflow-auto rounded-[10px] border border-border bg-card shadow-[var(--shadow-card)]">
+                      {consecMatches.length === 0 ? (
+                        <p className="px-3 py-2.5 text-[13px] text-muted-foreground">Nadie coincide.</p>
+                      ) : (
+                        consecMatches.map((w) => (
+                          <button
+                            key={w.dni}
+                            type="button"
+                            className={`flex w-full items-center justify-between gap-3 px-3 py-2.5 text-left text-[13px] hover:bg-muted ${
+                              w.dni === consec.dni ? "bg-[var(--primary-soft)] text-primary" : "text-foreground"
+                            }`}
+                            onClick={() => pickConsec(w)}
+                          >
+                            <span className="min-w-0 truncate font-medium">{w.nombre}</span>
+                            <span className="shrink-0 font-data text-[11px] text-muted-foreground">{w.dni}</span>
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  ) : null}
+                </div>
+              </Field>
+
+              {consecWorker && esAdelanto(consecWorker) ? (
+                <div className="rounded-lg border border-border bg-muted/40 px-3 py-2.5 text-[13px]">
+                  <p>
+                    Ingreso:{" "}
+                    <span className="font-data font-medium">{formatFechaIso(consecWorker.fecha_ingreso)}</span>
+                  </p>
+                  <p className="mt-1">
+                    Acumulado:{" "}
+                    <span className="font-semibold text-foreground">{topeDe(consecWorker)} día(s)</span>
+                    {" · "}
+                    Ya programados: {consecWorker.total_dias}
+                    {" · "}
+                    Disponibles:{" "}
+                    <span className="font-semibold text-foreground">
+                      {diasDisponibles(consecWorker.total_dias, topeDe(consecWorker))}
+                    </span>
+                  </p>
+                </div>
+              ) : consecWorker ? (
+                <Alert tone="warning" title="No aplica adelanto">
+                  {consecWorker.nombre} ya cumplió el año. Usa Programar vacaciones (hasta {MAX_VAC_DAYS} días).
+                </Alert>
+              ) : (
+                <p className="text-[13px] text-muted-foreground">Elige a la persona para ver cuánto tiene acumulado.</p>
+              )}
+
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="FECHA INICIO">
+                  <Input
+                    type="date"
+                    min={minProgramable}
+                    value={consec.start || minProgramable}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setConsec({ ...consec, start: v && v < minProgramable ? minProgramable : v });
+                    }}
+                  />
+                </Field>
+                <Field label="DÍAS A ADELANTAR">
+                  <Input
+                    type="number"
+                    min={1}
+                    max={consecWorker && esAdelanto(consecWorker) ? topeDe(consecWorker) : MAX_VAC_DAYS}
+                    value={consec.days}
+                    onChange={(e) => setConsec({ ...consec, days: Number(e.target.value) })}
+                  />
+                </Field>
+              </div>
+
+              {adelantoError ? (
+                <Alert tone="error" title="No se puede adelantar">
+                  {adelantoError}
+                </Alert>
+              ) : null}
+            </div>
+            <div className="flex justify-end gap-2 px-5 pb-5">
+              <Button
+                variant="outline"
+                disabled={consecSaving}
+                onClick={() => {
+                  setAdelantoOpen(false);
+                  setAdelantoError("");
+                }}
+              >
+                Cancelar
+              </Button>
+              <Button disabled={consecSaving} onClick={() => void guardarAdelanto()}>
+                {consecSaving && adelantoOpen ? "Guardando…" : "Guardar adelanto"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {modificarOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--overlay)] p-4">
+          <div className="w-full max-w-[520px] rounded-xl border border-border bg-card shadow-[0_8px_24px_#1E2C3A14]">
+            <div className="space-y-1.5 px-5 pt-5">
+              <h3 className="text-[15px] font-semibold">Modificar período</h3>
+              <p className="text-[13px] text-muted-foreground">
+                Solo tramos que aún no empiezan. Mismos días; el saldo no se descuenta otra vez.
+              </p>
+            </div>
+            <div className="space-y-3 px-5 py-3">
+              <p className="text-[13px] font-medium">
+                {consecWorker ? consecWorker.nombre : "Selecciona a la persona arriba, en Planificación."}
+              </p>
+              {periodosLoading ? (
+                <p className="text-[13px] text-muted-foreground">Cargando períodos…</p>
+              ) : periodos.length === 0 ? (
+                <p className="text-[13px] text-muted-foreground">Esta persona no tiene vacaciones programadas.</p>
+              ) : (
+                <div className="max-h-48 space-y-1 overflow-auto">
+                  {periodos.map((p) => (
+                    <button
+                      key={p.inicio}
+                      type="button"
+                      disabled={!p.editable}
+                      onClick={() => {
+                        if (!p.editable) return;
+                        setPeriodoSel(p.inicio);
+                        setModStart(minProgramable);
+                        setModificarError("");
+                      }}
+                      className={cn(
+                        "flex w-full items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left text-[13px]",
+                        !p.editable
+                          ? "cursor-not-allowed border-border/60 bg-muted/40 text-muted-foreground opacity-60"
+                          : periodoSel === p.inicio
+                            ? "border-primary bg-[var(--primary-soft)] text-primary"
+                            : "border-border hover:bg-muted"
+                      )}
+                    >
+                      <span>
+                        {formatFechaIso(p.inicio)} – {formatFechaIso(p.fin)} · {p.dias} día{p.dias === 1 ? "" : "s"}
+                      </span>
+                      <span className="shrink-0 text-[11px]">{etiquetaEstado(p.estado)}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              <Field label="NUEVA FECHA INICIO">
+                <Input
+                  type="date"
+                  min={minProgramable}
+                  value={modStart || minProgramable}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setModStart(v && v < minProgramable ? minProgramable : v);
+                  }}
+                />
+              </Field>
+              {periodoSel && modStart ? (
+                <p className="text-[12px] text-muted-foreground">
+                  Nuevo tramo: {formatFechaIso(modStart)} –{" "}
+                  {formatFechaIso(
+                    addDaysIso(modStart, (periodos.find((p) => p.inicio === periodoSel)?.dias || 1) - 1)
+                  )}
+                </p>
+              ) : null}
+              {modificarError ? (
+                <Alert tone="error" title="No se puede modificar">
+                  {modificarError}
+                </Alert>
+              ) : null}
+            </div>
+            <div className="flex justify-end gap-2 px-5 pb-5">
+              <Button
+                variant="outline"
+                disabled={consecSaving}
+                onClick={() => {
+                  setModificarOpen(false);
+                  setModificarError("");
+                }}
+              >
+                Cancelar
+              </Button>
+              <Button disabled={consecSaving} onClick={() => void guardarModificar()}>
+                {consecSaving && modificarOpen ? "Guardando…" : "Guardar cambio"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {modal ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--overlay)] p-4">
           <div className="w-full max-w-[440px] rounded-xl border border-border bg-card shadow-[0_8px_24px_#1E2C3A14]">
@@ -782,7 +1256,7 @@ export function PlanPage() {
                 <span className="font-semibold text-foreground">{modal.days}</span> día
                 {modal.days === 1 ? "" : "s"} · saldo{" "}
                 <span className="font-semibold text-foreground">{modal.disponibles}</span>/
-                {MAX_VAC_DAYS}
+                {modal.tope}
               </p>
             </div>
             <div className="space-y-3 px-5 py-3">

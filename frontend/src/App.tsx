@@ -61,7 +61,8 @@ export function App() {
           <Route element={<Shell />}>
             <Route path="/" element={<PlanPage />} />
             <Route path="/dashboard" element={<DashboardPage />} />
-            <Route path="/calendario" element={<CalendarPage />} />
+            <Route path="/record-vacacional" element={<CalendarPage />} />
+            <Route path="/calendario" element={<Navigate to="/record-vacacional" replace />} />
             <Route path="/exportar" element={<ExportPage />} />
             <Route path="/admin" element={<AdminPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />

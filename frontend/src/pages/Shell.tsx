@@ -43,7 +43,7 @@ function Multi({
 const NAV = [
   { to: "/", end: true, label: "Planificación", short: "Plan", Icon: CalendarRange },
   { to: "/dashboard", end: false, label: "Dashboard", short: "Dash", Icon: LayoutDashboard },
-  { to: "/calendario", end: false, label: "Calendario", short: "Cal", Icon: Calendar },
+  { to: "/record-vacacional", end: false, label: "Récord vacacional", short: "Récord", Icon: Calendar },
   { to: "/exportar", end: false, label: "Exportar", short: "Excel", Icon: FileSpreadsheet },
 ] as const;
 

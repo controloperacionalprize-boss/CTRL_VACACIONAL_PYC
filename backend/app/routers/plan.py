@@ -13,13 +13,19 @@ from ..domain.calendar import (
     clear_dates_for_week,
     count_year_days,
     date_is_past,
+    derecho_vigente,
     ensure_within_derecho,
     is_business_day,
     key_daily,
+    parse_iso_date,
+    record_cumplido,
+    move_vacation_period,
+    reject_if_art8_invalido,
     reject_if_exceeds_saldo,
     reject_if_start_in_past,
     selected_count,
     today_lima,
+    vacation_periods,
     week_dates,
     week_is_locked,
 )
@@ -31,6 +37,13 @@ router = APIRouter(prefix="/api/plan", tags=["plan"])
 
 def _http_value_error(exc: ValueError) -> HTTPException:
     return HTTPException(400, str(exc))
+
+
+def _derecho_for_emp(emp: dict, today: date) -> tuple[int, bool]:
+    """(tope de días, es_adelanto) según si el trabajador ya cumplió el récord anual."""
+    ingreso = parse_iso_date(emp.get("fecha_ingreso"))
+    es_adelanto = not record_cumplido(ingreso, today)
+    return derecho_vigente(ingreso, today), es_adelanto
 
 
 def _log_week_deltas(cur, emp: dict, year: int, deltas: list, user: dict) -> None:
@@ -148,11 +161,14 @@ def get_plan(
     for e in sorted(employees, key=lambda x: x["nombre"].casefold()):
         weeks = [int(targets.get((e["dni"], w), 0)) for w in range(1, TOTAL_SEMANAS + 1)]
         n = counts.get(e["dni"], 0)
+        tope, es_adelanto = _derecho_for_emp(e, today)
         rows.append({
             **e,
             "weeks": weeks,
             "total_dias": sum(weeks),
             "cambios": n,
+            "record_cumplido": not es_adelanto,
+            "tope_dias": tope,
         })
 
     return {
@@ -221,6 +237,10 @@ def patch_week(body: WeekPatch, user: dict = Depends(get_current_user)):
             clear_dates_for_week(daily_set, body.dni, body.year, body.week)
             targets.pop((body.dni, body.week), None)
             deltas = [(body.week, old, 0)]
+            try:
+                reject_if_art8_invalido(daily_set, body.dni, body.year)
+            except ValueError as exc:
+                raise _http_value_error(exc) from exc
         else:
             if not body.start_date:
                 raise HTTPException(400, "Si pones días de vacaciones, indica desde qué fecha empiezan.")
@@ -234,11 +254,14 @@ def patch_week(body: WeekPatch, user: dict = Depends(get_current_user)):
             programados = count_year_days(daily_set, body.dni, body.year)
             liberados = selected_count(daily_set, body.dni, week_dates(body.year, body.week))
             programados_base = programados - liberados
+            derecho, es_adelanto = _derecho_for_emp(emp, today_lima())
             try:
                 reject_if_exceeds_saldo(
                     nombre=emp["nombre"],
                     pedidas=body.days,
                     programados_base=programados_base,
+                    derecho=derecho,
+                    es_adelanto=es_adelanto,
                 )
                 _, deltas = apply_consecutive_span(
                     daily_set,
@@ -257,11 +280,13 @@ def patch_week(body: WeekPatch, user: dict = Depends(get_current_user)):
                     nombre=emp["nombre"],
                     pedidas=body.days,
                     programados_base=programados_base,
+                    derecho=derecho,
+                    es_adelanto=es_adelanto,
                 )
-            except ValueError as exc:
-                raise _http_value_error(exc) from exc
         persist_employee(cur, body.year, emp, daily_set, targets, user["correo"])
         _log_week_deltas(cur, emp, body.year, deltas, user)
+    weeks = {str(wk): new for wk, _old, new in deltas}
+    return {"ok": True, "weeks": weeks, "selected": weeks.get(str(body.week), 0)}
     weeks = {str(wk): new for wk, _old, new in deltas}
     return {"ok": True, "weeks": weeks, "selected": weeks.get(str(body.week), 0)}
 
@@ -293,11 +318,14 @@ def patch_daily(body: DailyPatch, user: dict = Depends(get_current_user)):
                 continue
             daily_set.add(key_daily(body.dni, d))
         n = selected_count(daily_set, body.dni, week_dates(body.year, body.week))
+        derecho, es_adelanto = _derecho_for_emp(emp, today)
         try:
             reject_if_exceeds_saldo(
                 nombre=emp["nombre"],
                 pedidas=n,
                 programados_base=programados,
+                derecho=derecho,
+                es_adelanto=es_adelanto,
             )
             ensure_within_derecho(
                 daily_set,
@@ -306,7 +334,10 @@ def patch_daily(body: DailyPatch, user: dict = Depends(get_current_user)):
                 nombre=emp["nombre"],
                 pedidas=n,
                 programados_base=programados,
+                derecho=derecho,
+                es_adelanto=es_adelanto,
             )
+            reject_if_art8_invalido(daily_set, body.dni, body.year)
         except ValueError as exc:
             raise _http_value_error(exc) from exc
         old = int(targets.get((body.dni, body.week), 0))
@@ -329,11 +360,14 @@ def consecutive(body: ConsecutiveIn, user: dict = Depends(get_current_user)):
             raise HTTPException(404, "Esa persona no aparece con el filtro actual.")
         daily_set, targets = load_scope_plan(cur, body.year, [emp])
         programados = count_year_days(daily_set, body.dni, body.year)
+        derecho, es_adelanto = _derecho_for_emp(emp, today_lima())
         try:
             reject_if_exceeds_saldo(
                 nombre=emp["nombre"],
                 pedidas=body.days,
                 programados_base=programados,
+                derecho=derecho,
+                es_adelanto=es_adelanto,
             )
             nuevas, deltas = apply_consecutive_span(
                 daily_set,
@@ -351,6 +385,8 @@ def consecutive(body: ConsecutiveIn, user: dict = Depends(get_current_user)):
                 nombre=emp["nombre"],
                 pedidas=body.days,
                 programados_base=programados,
+                derecho=derecho,
+                es_adelanto=es_adelanto,
             )
         except ValueError as exc:
             raise _http_value_error(exc) from exc
@@ -360,6 +396,101 @@ def consecutive(body: ConsecutiveIn, user: dict = Depends(get_current_user)):
         "ok": True,
         "fechas": [d.isoformat() for d in nuevas],
         "weeks": {str(wk): new for wk, _old, new in deltas},
+        "fin": nuevas[-1].isoformat() if nuevas else None,
+    }
+
+
+class PeriodMoveIn(BaseModel):
+    year: int
+    dni: str
+    old_start: date
+    new_start: date
+    days: int | None = None
+
+
+@router.get("/periods")
+def get_periods(year: int, dni: str, user: dict = Depends(get_current_user)):
+    with get_conn(write=False) as conn:
+        cur = conn.cursor()
+        emp = get_employee(cur, user, dni)
+        if not emp:
+            raise HTTPException(404, "Esa persona no aparece con el filtro actual.")
+        daily_set, _targets = load_scope_plan(cur, year, [emp])
+    today = today_lima()
+    periods = vacation_periods(daily_set, dni, year, today)
+    return {
+        "dni": dni,
+        "year": year,
+        "today": today.isoformat(),
+        "periodos": [
+            {
+                "inicio": p["inicio"].isoformat(),
+                "fin": p["fin"].isoformat(),
+                "dias": p["dias"],
+                "estado": p["estado"],
+                "editable": p["editable"],
+            }
+            for p in periods
+        ],
+    }
+
+
+@router.post("/period-move")
+def period_move(body: PeriodMoveIn, user: dict = Depends(get_current_user)):
+    with get_conn() as conn:
+        cur = conn.cursor()
+        emp = get_employee(cur, user, body.dni)
+        if not emp:
+            raise HTTPException(404, "Esa persona no aparece con el filtro actual.")
+        daily_set, targets = load_scope_plan(cur, body.year, [emp])
+        today = today_lima()
+        periods = vacation_periods(daily_set, body.dni, body.year, today)
+        found = next((p for p in periods if p["inicio"] == body.old_start), None)
+        if not found:
+            raise HTTPException(400, "No se encontró ese período de vacaciones.")
+        n = int(body.days) if body.days is not None else int(found["dias"])
+        programados = count_year_days(daily_set, body.dni, body.year)
+        programados_base = programados - int(found["dias"])
+        derecho, es_adelanto = _derecho_for_emp(emp, today)
+        try:
+            reject_if_exceeds_saldo(
+                nombre=emp["nombre"],
+                pedidas=n,
+                programados_base=programados_base,
+                derecho=derecho,
+                es_adelanto=es_adelanto,
+            )
+            nuevas, deltas, _old = move_vacation_period(
+                daily_set,
+                targets,
+                body.dni,
+                emp["tipo_personal"],
+                body.year,
+                body.old_start,
+                body.new_start,
+                n,
+                today=today,
+            )
+            ensure_within_derecho(
+                daily_set,
+                body.dni,
+                body.year,
+                nombre=emp["nombre"],
+                pedidas=n,
+                programados_base=programados_base,
+                derecho=derecho,
+                es_adelanto=es_adelanto,
+            )
+        except ValueError as exc:
+            raise _http_value_error(exc) from exc
+        persist_employee(cur, body.year, emp, daily_set, targets, user["correo"])
+        _log_week_deltas(cur, emp, body.year, deltas, user)
+    return {
+        "ok": True,
+        "fechas": [d.isoformat() for d in nuevas],
+        "fin": nuevas[-1].isoformat() if nuevas else None,
+        "weeks": {str(wk): new for wk, _old, new in deltas},
+        "dias": n,
     }
 
 

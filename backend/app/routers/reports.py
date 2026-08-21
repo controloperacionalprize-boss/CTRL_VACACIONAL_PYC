@@ -7,6 +7,7 @@ from fastapi.responses import Response
 from ..attendance_db import attendance_configured, fetch_attendance_dates
 from ..auth import get_current_user
 from ..db import get_conn
+from ..domain.calendar import today_lima
 from ..domain.employee_calendar import employee_calendar_payload
 from ..domain.export import build_record, export_excel
 from ..services import get_employee, list_employees, load_scope_plan
@@ -49,22 +50,15 @@ def export_plan(
     division: list[str] | None = Query(default=None),
     label: str = "PLAN",
 ):
-    today = date.today()
+    today = today_lima()
     cy, cw, _ = today.isocalendar()
     with get_conn(write=False) as conn:
         cur = conn.cursor()
         employees = list_employees(cur, user, empresa, gerencia, division)
         daily_set, targets = load_scope_plan(cur, year, employees)
         dnis = [e["dni"] for e in employees]
-        counts = {}
         log_rows = []
         if dnis:
-            cur.execute(
-                """SELECT dni, COUNT(*) AS n FROM change_log
-                   WHERE anio = %s AND dni = ANY(%s) GROUP BY dni""",
-                (year, dnis),
-            )
-            counts = {str(r["dni"]): int(r["n"]) for r in cur.fetchall()}
             cur.execute(
                 """SELECT id, fecha_hora, jefatura, anio, dni, nombre, tipo_persona,
                           semana_anterior, dias_anterior, semana_nueva, dias_nuevos,
@@ -81,7 +75,7 @@ def export_plan(
                 f = r["fecha"]
                 if isinstance(f, date):
                     dias_map.setdefault(str(r["dni"]), []).append(f)
-        historial = build_record(employees, dias_map)
+        historial = build_record(employees, dias_map, year, today)
     data = export_excel(
         employees,
         daily_set,
@@ -90,7 +84,6 @@ def export_plan(
         label,
         cy,
         cw,
-        counts,
         log_rows,
         user.get("usuario") or user["correo"],
         user.get("nombre_persona") or user.get("nombre_usuario"),

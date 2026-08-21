@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date
 from io import BytesIO
 
 from openpyxl import load_workbook
@@ -8,8 +8,8 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 import pandas as pd
 
-from .calendar import TOTAL_SEMANAS, add_years, format_antiguedad, group_consecutive_dates
-from .plan import daily_rows, group_periods
+from .calendar import TOTAL_SEMANAS, format_antiguedad, parse_iso_date, vacation_record_for
+from .plan import group_periods
 
 
 def semaforo_fill(value):
@@ -22,38 +22,29 @@ def semaforo_fill(value):
     return PatternFill("solid", fgColor=color) if color else None
 
 
-def build_record(employees, dias_map: dict[str, list[date]]):
+def build_record(employees, dias_map: dict[str, list[date]], year: int, today: date | None = None):
     rows = []
     for w in employees:
         dni = str(w["dni"])
-        f_ingreso = w.get("fecha_ingreso")
-        if isinstance(f_ingreso, str) and f_ingreso:
-            f_ingreso = date.fromisoformat(f_ingreso[:10])
-        tiene = isinstance(f_ingreso, date)
-        if tiene:
-            record = f"{f_ingreso.year}-{f_ingreso.year + 1}"
-            cumple = add_years(f_ingreso, 1) - timedelta(days=1)
-            vencimiento = add_years(f_ingreso, 2) - timedelta(days=1)
-            dias_gozados = sum(1 for d in dias_map.get(dni, []) if cumple <= d <= vencimiento)
-            dias_pendientes = 30 - dias_gozados
-        else:
-            record = ""
-            cumple = vencimiento = None
-            dias_gozados = dias_pendientes = None
+        f_ingreso = parse_iso_date(w.get("fecha_ingreso"))
+        rec = vacation_record_for(f_ingreso, dias_map.get(dni, []), year, today)
+        cumple = rec["cumple_record"]
+        vencimiento = rec["fecha_vencimiento"]
         rows.append({
             "EMPRESA": w.get("empresa", ""),
             "DNI": dni,
             "NOMBRE": w["nombre"],
-            "FECHA_INGRESO": f_ingreso.strftime("%d/%m/%Y") if tiene else "",
+            "FECHA_INGRESO": f_ingreso.strftime("%d/%m/%Y") if f_ingreso else "",
             "DIVISION": w.get("division", ""),
             "GERENCIA": w["gerencia"],
             "AREA": w["area"],
-            "RECORD_VACACIONAL": record,
+            "RECORD_VACACIONAL": rec["record_vacacional"],
             "CUMPLE_RECORD": cumple.strftime("%d/%m/%Y") if cumple else "",
-            "DIAS_PENDIENTES": dias_pendientes,
-            "DIAS_GOZADOS": dias_gozados,
+            "DIAS_PROGRAMADOS": rec["dias_programados"],
+            "DIAS_GOZADOS": rec["dias_gozados"],
+            "DIAS_PENDIENTES": rec["dias_pendientes"],
             "FECHA_VENCIMIENTO": vencimiento.strftime("%d/%m/%Y") if vencimiento else "",
-            "ANTIGUEDAD": format_antiguedad(f_ingreso if tiene else None),
+            "ANTIGUEDAD": format_antiguedad(f_ingreso),
         })
     return rows
 
@@ -66,67 +57,48 @@ def export_excel(
     label_jefatura,
     current_year,
     current_week,
-    change_counts,
     change_log,
     usuario,
     nombre_usuario,
     historial=None,
 ):
-    daily = daily_rows(employees, daily_set, year)
     periods = group_periods(employees, daily_set, year)
     weekly_rows = []
     for w in sorted(employees, key=lambda x: str(x["nombre"]).casefold()):
         dni = str(w["dni"])
         weeks = {f"S{week}": int(targets.get((dni, week), 0)) for week in range(1, TOTAL_SEMANAS + 1)}
-        f_ing = w.get("fecha_ingreso")
-        if isinstance(f_ing, date):
-            f_ing_str = f_ing.strftime("%d/%m/%Y")
-        elif f_ing:
-            f_ing_str = str(f_ing)
-        else:
-            f_ing_str = ""
-        changes = int(change_counts.get(dni, 0))
-        row = {
-            "EMPRESA": w.get("empresa", ""),
+        weekly_rows.append({
             "NOMBRE": w["nombre"],
             "DNI": dni,
-            "DIVISION": w.get("division", ""),
-            "GERENCIA": w["gerencia"],
             "AREA": w["area"],
-            "CARGO_ACTUAL": w.get("cargo_actual", ""),
-            "F_INGRESO": f_ing_str,
             "TIPO": w["tipo_personal"],
-            "TOTAL_DIAS": sum(weeks.values()),
-            "CAMBIOS": f"{changes} cambio" if changes == 1 else f"{changes} cambios",
+            "TOTAL": sum(weeks.values()),
             **weeks,
-        }
-        weekly_rows.append(row)
+        })
 
     summary = pd.DataFrame([{
         "JEFATURA": label_jefatura,
         "AÑO": year,
         "TRABAJADORES": len(employees),
-        "PERSONAS_PROGRAMADAS": len({r["dni"] for r in daily}),
-        "DIAS_PROGRAMADOS": len(daily),
+        "PERSONAS_PROGRAMADAS": len({r["dni"] for r in periods}),
+        "DIAS_PROGRAMADOS": sum(int(r["dias"]) for r in periods),
         "GENERADO": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S"),
         "USUARIO_GENERADOR": usuario,
         "NOMBRE_USUARIO": nombre_usuario,
     }])
     periods_df = pd.DataFrame(periods) if periods else pd.DataFrame(
-        columns=["dni", "nombre", "gerencia", "area", "jefatura", "tipo_personal", "semana", "fecha_inicio", "fecha_fin", "dias"]
+        columns=["dni", "nombre", "gerencia", "area", "jefatura", "tipo_personal", "fecha_inicio", "fecha_fin", "dias"]
     )
-    daily_df = pd.DataFrame(daily) if daily else pd.DataFrame()
     weekly_df = pd.DataFrame(weekly_rows)
-    historial_df = pd.DataFrame(historial) if historial else pd.DataFrame()
+    record_df = pd.DataFrame(historial) if historial else pd.DataFrame()
     change_df = pd.DataFrame(change_log) if change_log else pd.DataFrame()
 
     output = BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         summary.to_excel(writer, sheet_name="RESUMEN", index=False)
-        periods_df.to_excel(writer, sheet_name="VACACIONES", index=False)
-        daily_df.to_excel(writer, sheet_name="DETALLE_DIARIO", index=False)
-        weekly_df.to_excel(writer, sheet_name="PLAN_SEMANAL", index=False)
-        historial_df.to_excel(writer, sheet_name="HISTORIAL", index=False)
+        weekly_df.to_excel(writer, sheet_name="PLANIFICACION", index=False)
+        periods_df.to_excel(writer, sheet_name="PERIODOS", index=False)
+        record_df.to_excel(writer, sheet_name="RECORD_VACACIONAL", index=False)
         change_df.to_excel(writer, sheet_name="CAMBIOS", index=False)
     output.seek(0)
 
@@ -154,7 +126,7 @@ def export_excel(
                 cell.alignment = Alignment(vertical="center")
             ws.column_dimensions[get_column_letter(column_cells[0].column)].width = min(max(max_len + 2, 10), 35)
 
-    ws = wb["PLAN_SEMANAL"]
+    ws = wb["PLANIFICACION"]
     for col_idx in range(1, ws.max_column + 1):
         header = str(ws.cell(1, col_idx).value or "")
         if header.startswith("S") and header[1:].isdigit():

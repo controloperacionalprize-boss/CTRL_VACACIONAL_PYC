@@ -2,7 +2,7 @@ import { useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode 
 import { CalendarCheck, CalendarClock, CalendarRange, Layers, PenLine } from "lucide-react";
 import { api, qs } from "../api";
 import { useApp } from "../state";
-import { Button, EmptyState, Field, Input, PageHeader, Select, cn } from "../components/ui";
+import { Alert, Button, EmptyState, Field, Input, PageHeader, Select, cn } from "../components/ui";
 
 type Emp = { dni: string; nombre: string; foto_url?: string | null };
 type DayKind = "vacacion" | "asistencia" | "falta" | "nolab" | null;
@@ -30,6 +30,16 @@ type Cal = {
   no_laborables: string[];
   attendance_ok: boolean;
   periodos: { tipo: string; inicio: string; fin: string; dias: number }[];
+  record?: {
+    record_vacacional: string;
+    cumple_record: string | null;
+    fecha_vencimiento: string | null;
+    dias_programados: number;
+    dias_gozados: number;
+    dias_pendientes: number;
+    record_cumplido: boolean;
+    derecho: number;
+  };
 };
 
 const MESES = [
@@ -216,6 +226,7 @@ export function CalendarPage() {
   const deferredQ = useDeferredValue(q);
   const [year, setYear] = useState(filters.year);
   const [cal, setCal] = useState<Cal | null>(null);
+  const [loadError, setLoadError] = useState("");
   const boxRef = useRef<HTMLDivElement>(null);
   const monthEls = useRef<(HTMLDivElement | null)[]>([]);
   const params = useMemo(
@@ -228,21 +239,58 @@ export function CalendarPage() {
   );
 
   useEffect(() => {
-    api<{ items: Emp[] }>(`/api/employees${qs(params)}`).then((r) => {
-      setPeople(r.items);
-      if (!dni && r.items[0]) {
-        setDni(r.items[0].dni);
-        setQ(`${r.items[0].nombre} · ${r.items[0].dni}`);
-      }
-    });
+    setYear(filters.year);
+  }, [filters.year]);
+
+  useEffect(() => {
+    let cancelled = false;
+    api<{ items: Emp[] }>(`/api/employees${qs(params)}`)
+      .then((r) => {
+        if (cancelled) return;
+        const items = r.items || [];
+        setPeople(items);
+        setDni((current) => {
+          if (current && items.some((p) => p.dni === current)) return current;
+          const first = items[0];
+          if (first) {
+            setQ(`${first.nombre} · ${first.dni}`);
+            return first.dni;
+          }
+          setQ("");
+          return "";
+        });
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        setPeople([]);
+        setLoadError(e instanceof Error ? e.message : "No se pudo cargar el personal.");
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [params]);
 
   useEffect(() => {
     if (!dni) {
       setCal(null);
+      setLoadError("");
       return;
     }
-    api<Cal>(`/api/calendar/${dni}${qs({ year })}`).then(setCal);
+    let cancelled = false;
+    api<Cal>(`/api/calendar/${dni}${qs({ year })}`)
+      .then((data) => {
+        if (cancelled) return;
+        setCal(data);
+        setLoadError("");
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        setCal(null);
+        setLoadError(e instanceof Error ? e.message : "No se pudo cargar el récord.");
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [dni, year]);
 
   useEffect(() => {
@@ -289,14 +337,18 @@ export function CalendarPage() {
   const nolab = useMemo(() => new Set(cal?.no_laborables || []), [cal?.no_laborables]);
 
   const e = cal?.empleado;
-  const derecho = 30;
-  const usados = cal?.consumido ?? 0;
-  const disponibles = cal?.disponible ?? derecho;
-  const pendientes = Math.max(derecho - usados, 0);
+  const rec = cal?.record;
+  const derecho = rec?.derecho ?? 30;
+  const usados = rec?.dias_programados ?? cal?.consumido ?? 0;
+  const pendientes = rec?.dias_pendientes ?? Math.max(derecho - usados, 0);
+  const gozados = rec?.dias_gozados ?? 0;
 
   return (
     <div className="space-y-4">
-      <PageHeader title="Calendario del empleado" help="Vacaciones, asistencia y marcación del año." />
+      <PageHeader
+        title="Récord vacacional"
+        help="Se arma con la fecha de ingreso del maestro de trabajadores y los días que ya están en el cronograma / planificación."
+      />
 
       <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
         <Field label="EMPLEADO" className="min-w-0 w-full max-w-xl flex-1 sm:min-w-80">
@@ -355,6 +407,12 @@ export function CalendarPage() {
         </Field>
       </div>
 
+      {loadError ? (
+        <Alert tone="error" title="No se pudo cargar">
+          {loadError}
+        </Alert>
+      ) : null}
+
       {!dni ? (
         <EmptyState title="Elige a alguien" body="Busca por nombre o DNI." />
       ) : !cal ? (
@@ -363,7 +421,7 @@ export function CalendarPage() {
         <div className="grid grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1fr)_280px] xl:items-stretch">
           <div className="flex h-full min-h-0 flex-col rounded-xl border border-border bg-card p-3 shadow-[var(--shadow-card)]">
             <div className="mb-2.5 flex shrink-0 flex-wrap items-center justify-between gap-2">
-              <h3 className="text-[12px] font-semibold">Calendario {year}</h3>
+              <h3 className="text-[12px] font-semibold">Año {year}</h3>
               <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[10px] text-muted-foreground">
                 {LEGEND.map((item) => (
                   <span key={item.label} className="inline-flex items-center gap-1">
@@ -444,12 +502,21 @@ export function CalendarPage() {
               </div>
             </SideCard>
 
+            <SideCard title="Récord">
+              <div className="divide-y divide-border/80">
+                <MetaRow label="Período" value={rec?.record_vacacional || "—"} />
+                <MetaRow label="Cumple récord" value={formatFecha(rec?.cumple_record)} />
+                <MetaRow label="Vencimiento" value={formatFecha(rec?.fecha_vencimiento)} />
+                <MetaRow label="Ingreso" value={formatFecha(e?.fecha_ingreso)} />
+              </div>
+            </SideCard>
+
             <SideCard title={`Vacaciones ${year}`}>
               <div className="grid grid-cols-2 gap-1.5">
                 {[
                   { label: "Derecho", value: derecho, Icon: CalendarRange, tone: "text-primary bg-[var(--primary-soft)]" },
-                  { label: "Usados", value: usados, Icon: CalendarCheck, tone: "text-success bg-success-muted" },
-                  { label: "Disponibles", value: disponibles, Icon: CalendarClock, tone: "text-info bg-info-muted" },
+                  { label: "Programados", value: usados, Icon: CalendarCheck, tone: "text-success bg-success-muted" },
+                  { label: "Gozados", value: gozados, Icon: CalendarClock, tone: "text-info bg-info-muted" },
                   { label: "Pendientes", value: pendientes, Icon: Layers, tone: "text-warning bg-warning-muted" },
                 ].map(({ label, value, Icon, tone }) => (
                   <div
