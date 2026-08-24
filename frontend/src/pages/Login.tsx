@@ -27,6 +27,7 @@ export function Login({ onLogin }: Props) {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [flow, setFlow] = useState<Flow | null>(null);
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     if (!flow) return;
@@ -58,14 +59,25 @@ export function Login({ onLogin }: Props) {
 
   async function startMicrosoft() {
     setError("");
+    setCopied(false);
     setLoading(true);
     try {
       const data = await api<Flow>("/api/auth/microsoft/start", { method: "POST" });
       setFlow(data);
-      window.open(data.verification_uri, "_blank", "noopener,noreferrer");
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudo conectar con Microsoft. Inténtalo de nuevo.");
       setLoading(false);
+    }
+  }
+
+  async function copyCode() {
+    if (!flow) return;
+    try {
+      await navigator.clipboard.writeText(flow.user_code);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setCopied(false);
     }
   }
 
@@ -81,11 +93,7 @@ export function Login({ onLogin }: Props) {
             </p>
           ) : (
             <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-              Abre{" "}
-              <a className="text-info underline" href={flow.verification_uri} target="_blank" rel="noreferrer">
-                microsoft.com/devicelogin
-              </a>{" "}
-              e ingresa este código:
+              Copia este código y luego ingresa a Microsoft para pegarlo:
             </p>
           )}
         </div>
@@ -102,16 +110,39 @@ export function Login({ onLogin }: Props) {
           </button>
         ) : (
           <div className="flex flex-col gap-4">
-            <div className="flex items-center justify-center rounded-[8px] border border-border bg-muted py-4">
-              <span className="font-data text-[22px] font-semibold tracking-[0.25em] text-foreground">{flow.user_code}</span>
+            <div className="flex flex-col items-center gap-3 rounded-[8px] border border-border bg-muted py-4 px-3">
+              <span className="font-data text-[22px] font-semibold tracking-[0.25em] text-foreground">
+                {flow.user_code}
+              </span>
+              <button
+                type="button"
+                onClick={copyCode}
+                className="text-xs font-medium text-info hover:underline"
+              >
+                {copied ? "Código copiado" : "Copiar código"}
+              </button>
             </div>
-            <p className="text-xs text-muted-foreground">Esperando confirmación en Microsoft…</p>
+
+            <a
+              href={flow.verification_uri}
+              target="_blank"
+              rel="noreferrer"
+              className="flex h-10 w-full items-center justify-center gap-3 rounded-[8px] border border-border bg-card text-sm font-medium text-foreground hover:bg-muted"
+            >
+              <MicrosoftLogo />
+              Ingresa aquí a Microsoft
+            </a>
+
+            <p className="text-xs text-muted-foreground">
+              Esperando confirmación en Microsoft… Pega el código cuando te lo pida.
+            </p>
             <Button
               variant="ghost"
               className="w-fit px-0"
               onClick={() => {
                 setFlow(null);
                 setLoading(false);
+                setCopied(false);
               }}
             >
               Cancelar
