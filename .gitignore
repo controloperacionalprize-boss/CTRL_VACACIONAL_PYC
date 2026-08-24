@@ -40,6 +40,8 @@ backend/sql/carga_datos.sql
 tmp/
 temp/
 .cache/
+backend/.msal_attendance_cache.bin
+.msal_*.bin
 
 # --- OS / editores ---
 .DS_Store

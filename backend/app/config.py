@@ -29,6 +29,12 @@ class Settings(BaseSettings):
     attendance_dni_column: str = "dni"
     attendance_date_column: str = "fecha"
 
+    # Excel SharePoint HIK (completa huecos de la BD). Token: script MFA.
+    attendance_excel_share_url: str = ""
+    attendance_excel_sharepoint_url: str = ""
+    attendance_excel_refresh_token: str = ""
+    attendance_msal_cache: str = ""
+
     # Fotos: https://github.com/CCozd/PICTURES (match por usuario de correo en personal_roster.json)
     pictures_enabled: bool = True
     pictures_repo: str = "CCozd/PICTURES"

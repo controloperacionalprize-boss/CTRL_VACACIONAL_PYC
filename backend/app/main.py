@@ -15,7 +15,7 @@ from .routers.plan import router as plan_router
 from .routers.reports import router as reports_router
 
 # Cambia con cada fix de deploy para verificar en /api/version qué código está vivo.
-DEPLOY_MARK = "casos-art8-adelanto-v3"
+DEPLOY_MARK = "asistencia-msal-sharepoint-v2"
 
 
 @asynccontextmanager

@@ -66,6 +66,12 @@ Instalación vacía de tablas: ejecuta `backend/sql/schema.sql` en el SQL Editor
 | `MS_SCOPE` | `openid profile email` |
 | `CORS_ORIGINS` | URL de Vercel (ej. `https://tu-app.vercel.app`) |
 | `EXPOSE_DOCS` | `false` |
+| `ATTENDANCE_DATABASE_URL` | (opcional) BD de marcación Hik |
+| `ATTENDANCE_EXCEL_SHARE_URL` | link `:x:/s/...` del Excel HIK V2 |
+| `ATTENDANCE_EXCEL_REFRESH_TOKEN` | refresh token corto (script MFA abajo) |
+
+**Excel asistencia**  
+`cd backend` → `python scripts/obtener_token_excel_sharepoint.py` → pega `ATTENDANCE_EXCEL_REFRESH_TOKEN` en Render. BD primero; Excel completa días posteriores.
 
 4. Deploy. Anota la URL pública, ej. `https://ctrl-vacacional-api.onrender.com`.
 

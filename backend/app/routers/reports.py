@@ -4,7 +4,7 @@ import re
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 
-from ..attendance_db import attendance_configured, fetch_attendance_dates
+from ..attendance import fetch_merged_attendance
 from ..auth import get_current_user
 from ..db import get_conn
 from ..domain.calendar import today_lima
@@ -34,10 +34,14 @@ def calendar_emp(
             (dni, year, inicio, fin),
         )
         fechas = [r["fecha"] for r in cur.fetchall() if isinstance(r["fecha"], date)]
-    ok = attendance_configured()
-    asistencia = fetch_attendance_dates(dni, year) if ok else set()
+    asistencia, ok, coverage = fetch_merged_attendance(dni, year)
     return employee_calendar_payload(
-        emp, year, sorted(fechas), asistencia=asistencia, attendance_ok=ok
+        emp,
+        year,
+        sorted(fechas),
+        asistencia=asistencia,
+        attendance_ok=ok,
+        coverage_until=coverage,
     )
 
 

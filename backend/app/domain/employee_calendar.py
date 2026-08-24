@@ -13,6 +13,7 @@ def employee_calendar_payload(
     *,
     asistencia: set[date] | None = None,
     attendance_ok: bool = False,
+    coverage_until: date | None = None,
 ):
     f_ingreso = parse_iso_date(worker.get("fecha_ingreso"))
 
@@ -21,6 +22,10 @@ def employee_calendar_payload(
     holidays = peru_holidays(anio)
     today = today_lima()
     desde = f_ingreso if isinstance(f_ingreso, date) else date(anio, 1, 1)
+    # No pintar faltas más allá de lo que BD/Excel realmente cubren (ej. Excel al 23).
+    hasta = today
+    if isinstance(coverage_until, date):
+        hasta = min(today, coverage_until)
 
     no_laborables: list[str] = []
     sin_marcacion: list[str] = []
@@ -31,7 +36,7 @@ def employee_calendar_payload(
             no_laborables.append(d.isoformat())
         elif (
             attendance_ok
-            and desde <= d <= today
+            and desde <= d <= hasta
             and d not in vac
             and d not in asist
         ):

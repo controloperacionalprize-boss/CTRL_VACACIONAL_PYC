@@ -30,3 +30,17 @@ services:
         sync: false
       - key: EXPOSE_DOCS
         value: "false"
+      - key: ATTENDANCE_DATABASE_URL
+        sync: false
+      - key: ATTENDANCE_SCHEMA
+        value: public
+      - key: ATTENDANCE_TABLE
+        value: rpt_asistencia_hik
+      - key: ATTENDANCE_DNI_COLUMN
+        value: ID
+      - key: ATTENDANCE_DATE_COLUMN
+        value: Fecha
+      - key: ATTENDANCE_EXCEL_SHARE_URL
+        sync: false
+      - key: ATTENDANCE_EXCEL_REFRESH_TOKEN
+        sync: false
