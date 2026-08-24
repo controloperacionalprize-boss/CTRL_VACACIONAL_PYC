@@ -6,7 +6,7 @@ import { Alert, Button, EmptyState, Field, Input, PageHeader, Select, cn } from 
 import { EmpAvatar } from "../components/EmpAvatar";
 
 type Emp = { dni: string; nombre: string; foto_url?: string | null };
-type DayKind = "vacacion" | "asistencia" | "falta" | "nolab" | null;
+type DayKind = "vacacion" | "asistencia" | "falta" | "nolab" | "preingreso" | null;
 type Cal = {
   empleado: {
     nombre: string;
@@ -63,6 +63,7 @@ const DAY_CLASS: Record<Exclude<DayKind, null>, string> = {
   asistencia: "bg-success-muted font-semibold text-success",
   falta: "bg-error-muted font-semibold text-error",
   nolab: "bg-muted text-muted-foreground",
+  preingreso: "bg-muted/40 text-muted-foreground/55 opacity-45",
 };
 
 const LEGEND: { cls: string; label: string; dot?: boolean }[] = [
@@ -70,6 +71,7 @@ const LEGEND: { cls: string; label: string; dot?: boolean }[] = [
   { cls: "bg-success-muted ring-1 ring-success/30", label: "Asistencia" },
   { cls: "bg-error-muted ring-1 ring-error/30", label: "Sin marcación" },
   { cls: "bg-muted ring-1 ring-border", label: "No laborable" },
+  { cls: "bg-muted/40 opacity-45 ring-1 ring-border/60", label: "Antes del ingreso" },
   { cls: "rounded-full bg-foreground", label: "Hoy", dot: true },
 ];
 
@@ -82,8 +84,10 @@ function dayKind(
   vac: Set<string>,
   asist: Set<string>,
   falta: Set<string>,
-  nolab: Set<string>
+  nolab: Set<string>,
+  ingresoIso: string | null
 ): DayKind {
+  if (ingresoIso && iso < ingresoIso) return "preingreso";
   if (vac.has(iso)) return "vacacion";
   if (nolab.has(iso)) return "nolab";
   if (asist.has(iso)) return "asistencia";
@@ -105,6 +109,7 @@ function MiniCal({
   asist,
   falta,
   nolab,
+  ingresoIso,
   monthRef,
 }: {
   year: number;
@@ -113,6 +118,7 @@ function MiniCal({
   asist: Set<string>;
   falta: Set<string>;
   nolab: Set<string>;
+  ingresoIso: string | null;
   monthRef?: (el: HTMLDivElement | null) => void;
 }) {
   const first = new Date(year, month, 1);
@@ -126,6 +132,7 @@ function MiniCal({
 
   const today = new Date();
   const todayIso = isoDay(today.getFullYear(), today.getMonth(), today.getDate());
+  const kindAt = (iso: string) => dayKind(iso, vac, asist, falta, nolab, ingresoIso);
 
   return (
     <div ref={monthRef} className="flex h-full min-h-0 flex-col rounded-lg border border-border/70 p-2">
@@ -139,22 +146,26 @@ function MiniCal({
         {cells.map((d, i) => {
           if (!d) return <div key={i} className="min-h-[18px]" />;
           const iso = isoDay(year, month, d);
-          const kind = dayKind(iso, vac, asist, falta, nolab);
-          const prevKind = d > 1 ? dayKind(isoDay(year, month, d - 1), vac, asist, falta, nolab) : null;
-          const nextKind = d < daysInMonth ? dayKind(isoDay(year, month, d + 1), vac, asist, falta, nolab) : null;
+          const kind = kindAt(iso);
+          const prevKind = d > 1 ? kindAt(isoDay(year, month, d - 1)) : null;
+          const nextKind = d < daysInMonth ? kindAt(isoDay(year, month, d + 1)) : null;
           const isToday = iso === todayIso;
           const round =
             kind === "vacacion"
               ? `${prevKind === "vacacion" ? "" : "rounded-l-full"} ${nextKind === "vacacion" ? "" : "rounded-r-full"}`
               : "rounded-sm";
+          const title =
+            kind === "preingreso" && ingresoIso
+              ? `${iso} · antes del ingreso (${formatFecha(ingresoIso)})`
+              : iso;
           return (
             <div
               key={i}
-              title={iso}
+              title={title}
               className={cn(
                 "relative flex min-h-[18px] items-center justify-center text-[8px]",
                 kind ? `${DAY_CLASS[kind]} ${round}` : "text-foreground",
-                isToday && "ring-1 ring-inset ring-primary"
+                isToday && kind !== "preingreso" && "ring-1 ring-inset ring-primary"
               )}
             >
               {d}
@@ -302,6 +313,10 @@ export function CalendarPage() {
   const asist = useMemo(() => new Set(cal?.asistencia || []), [cal?.asistencia]);
   const falta = useMemo(() => new Set(cal?.sin_marcacion || []), [cal?.sin_marcacion]);
   const nolab = useMemo(() => new Set(cal?.no_laborables || []), [cal?.no_laborables]);
+  const ingresoIso = useMemo(() => {
+    const raw = cal?.empleado?.fecha_ingreso;
+    return raw ? raw.slice(0, 10) : null;
+  }, [cal?.empleado?.fecha_ingreso]);
 
   const e = cal?.empleado;
   const rec = cal?.record;
@@ -417,6 +432,7 @@ export function CalendarPage() {
                   asist={asist}
                   falta={falta}
                   nolab={nolab}
+                  ingresoIso={ingresoIso}
                   monthRef={(el) => {
                     monthEls.current[m] = el;
                   }}

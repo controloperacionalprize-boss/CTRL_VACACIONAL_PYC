@@ -56,6 +56,11 @@ def test_sin_marcacion_solo_desde_fecha_ingreso():
     assert "2026-01-15" not in payload["sin_marcacion"]
     assert "2026-02-10" not in payload["sin_marcacion"]
     assert "2026-04-20" not in payload["sin_marcacion"]
+    # Fin de semana / feriados previos al ingreso tampoco van como no_laborables
+    # (el front los pinta como “antes del ingreso”).
+    assert "2026-01-03" not in payload["no_laborables"]  # sábado
+    assert "2026-04-02" not in payload["no_laborables"]  # Jueves Santo < ingreso
+    assert "2026-04-25" in payload["no_laborables"]  # sábado ya con vínculo
     # 21/04/2026 = martes: si es <= hoy, cuenta como falta
     if date.today() >= date(2026, 4, 21):
         assert "2026-04-21" in payload["sin_marcacion"]

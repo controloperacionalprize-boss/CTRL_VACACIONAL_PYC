@@ -32,6 +32,10 @@ def employee_calendar_payload(
     d = date(anio, 1, 1)
     end = date(anio + 1, 1, 1)
     while d < end:
+        # Días previos al ingreso: sin faltas ni “no laborable” pintado (el front los marca deshabilitados).
+        if isinstance(f_ingreso, date) and d < f_ingreso:
+            d += timedelta(days=1)
+            continue
         if d.weekday() >= 5 or d in holidays:
             no_laborables.append(d.isoformat())
         elif (
@@ -73,7 +77,11 @@ def employee_calendar_payload(
             "derecho": DERECHO_ANUAL,
         },
         "fechas": [x.isoformat() for x in fechas],
-        "asistencia": sorted(x.isoformat() for x in asist),
+        "asistencia": sorted(
+            x.isoformat()
+            for x in asist
+            if not isinstance(f_ingreso, date) or x >= f_ingreso
+        ),
         "sin_marcacion": sin_marcacion,
         "no_laborables": no_laborables,
         "attendance_ok": attendance_ok,
