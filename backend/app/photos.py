@@ -2,7 +2,7 @@
 
 Prioridad de match:
 1) usuario del correo en personal_roster.json (ej. eabanto@… → eabanto.jpg)
-2) fallback: inicial + apellido (slug) por si el roster no tiene a la persona
+2) fallback: inicial + apellido (slug) solo si la persona NO está en el roster
 """
 
 from __future__ import annotations
@@ -24,7 +24,6 @@ _CACHE: tuple[float, dict[str, str]] | None = None
 _CACHE_TTL = 3600
 _PARTICULAS = {"de", "del", "la", "las", "los", "y", "e", "da", "do", "das", "dos"}
 _ROSTER_PATH = Path(__file__).resolve().parent / "data" / "personal_roster.json"
-
 
 def _strip_accents(s: str) -> str:
     nk = unicodedata.normalize("NFD", s)
@@ -99,6 +98,17 @@ def load_roster() -> list[dict]:
     except (OSError, json.JSONDecodeError):
         return []
     return data if isinstance(data, list) else []
+
+
+@lru_cache(maxsize=1)
+def roster_usuario_stems() -> frozenset[str]:
+    """Usuarios de correo en roster (reservados: no usar slug que choque con ellos)."""
+    stems: set[str] = set()
+    for row in load_roster():
+        usuario = row.get("usuario") or usuario_from_email(row.get("email"))
+        if usuario:
+            stems.add(str(usuario).strip().lower())
+    return frozenset(stems)
 
 
 @lru_cache(maxsize=1)
@@ -223,9 +233,14 @@ def resolve_foto_url(nombre: str | None) -> str | None:
         hit = _url_for_stem(usuario, index, base)
         if hit:
             return hit
+        # En roster pero sin archivo: no adivinar con slug (evita jflores → foto de otro Flores).
+        return None
 
-    # 2) Fallback histórico: inicial + apellido.
+    # 2) Fallback solo si la persona no está en el roster.
+    reserved = roster_usuario_stems()
     for slug in slug_candidates(nombre):
+        if slug in reserved:
+            continue
         hit = _url_for_stem(slug, index, base)
         if hit:
             return hit

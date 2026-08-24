@@ -88,7 +88,7 @@ function scope(filters: ReturnType<typeof useApp>["filters"]) {
     year: filters.year,
     empresa: filters.empresas.includes("TODAS") ? undefined : filters.empresas,
     gerencia: filters.gerencias.includes("TODAS") ? undefined : filters.gerencias,
-    division: filters.divisiones.includes("TODAS") ? undefined : filters.divisiones,
+    area: filters.areas.includes("TODAS") ? undefined : filters.areas,
   };
 }
 
@@ -979,7 +979,7 @@ export function PlanPage() {
       {plan.workers.length === 0 ? (
         <EmptyState
           title="No hay trabajadores"
-          body="Cambia el año, la empresa, la gerencia o la división. Con este filtro no aparece nadie."
+          body="Cambia el año, la empresa, la gerencia o el área. Con este filtro no aparece nadie."
         />
       ) : visible.length === 0 ? (
         <EmptyState title="Nadie coincide" body="Prueba con otro nombre, DNI o área." />

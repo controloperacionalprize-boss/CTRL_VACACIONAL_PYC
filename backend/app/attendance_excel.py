@@ -11,7 +11,8 @@ import urllib.request
 from datetime import date, datetime
 from io import BytesIO
 from pathlib import Path
-from threading import Lock
+from threading import Lock, Thread
+from zoneinfo import ZoneInfo
 
 import msal
 import pandas as pd
@@ -31,15 +32,28 @@ DEFAULT_SHARE_URL = (
 )
 
 _CACHE_FILE = Path(__file__).resolve().parents[1] / ".msal_attendance_cache.bin"
-_CACHE_TTL_SEC = 30 * 60
+# El HIK se actualiza de un día para otro: una descarga por día basta.
+_FAIL_BACKOFF_SEC = 5 * 60
+_LIMA = ZoneInfo("America/Lima")
 _LOCK = Lock()
+_refreshing = False
 _cache: dict = {
     "loaded_at": 0.0,
+    "loaded_day": None,
     "by_dni": {},
     "max_date": None,
     "ok": False,
     "error": None,
+    "fail_until": 0.0,
 }
+
+
+def _lima_today() -> date:
+    return datetime.now(_LIMA).date()
+
+
+def _cache_is_fresh() -> bool:
+    return bool(_cache.get("ok") and _cache.get("loaded_day") == _lima_today())
 
 
 def _excel_url() -> str:
@@ -277,7 +291,10 @@ def _to_dni(value: object) -> str:
     return text
 
 
-def parse_attendance_excel(content: bytes) -> tuple[dict[str, set[date]], date | None]:
+def parse_attendance_excel(
+    content: bytes, *, after: date | None = None
+) -> tuple[dict[str, set[date]], date | None]:
+    """Lee el Excel y se queda solo con fechas posteriores a `after` (hueco vs BD)."""
     by_dni: dict[str, set[date]] = {}
     max_date: date | None = None
     xl = pd.ExcelFile(BytesIO(content))
@@ -294,73 +311,139 @@ def parse_attendance_excel(content: bytes) -> tuple[dict[str, set[date]], date |
         fecha_col = _pick_col(cols, ("fecha", "fecha marcacion", "fecha marcación", "dia", "día"))
         if not dni_col or not fecha_col:
             continue
-        for _, row in df.iterrows():
-            dni = _to_dni(row.get(dni_col))
-            fecha = _to_date(row.get(fecha_col))
+        dnis = df[dni_col].map(_to_dni)
+        fechas = pd.to_datetime(df[fecha_col], dayfirst=True, errors="coerce")
+        mask = dnis.ne("") & fechas.notna()
+        if after is not None:
+            cutoff = pd.Timestamp(after)
+            mask &= fechas.dt.normalize() > cutoff
+        if not mask.any():
+            continue
+        for dni, ts in zip(dnis[mask].tolist(), fechas[mask].tolist()):
+            fecha = ts.date() if hasattr(ts, "date") else _to_date(ts)
             if not dni or not fecha:
                 continue
-            by_dni.setdefault(dni, set()).add(fecha)
+            by_dni.setdefault(str(dni), set()).add(fecha)
             if max_date is None or fecha > max_date:
                 max_date = fecha
     return by_dni, max_date
 
 
-def _load_cache(force: bool = False) -> dict:
+def _snapshot() -> dict:
     with _LOCK:
-        age = time.time() - float(_cache["loaded_at"] or 0)
-        if not force and _cache["loaded_at"] and age < _CACHE_TTL_SEC and _cache["ok"]:
-            return _cache
+        return {
+            "ok": bool(_cache.get("ok")),
+            "by_dni": _cache.get("by_dni") or {},
+            "max_date": _cache.get("max_date"),
+            "loaded_day": _cache.get("loaded_day"),
+            "error": _cache.get("error"),
+        }
 
-    if not excel_attendance_configured():
-        with _LOCK:
-            _cache.update({"ok": False, "by_dni": {}, "max_date": None, "error": "sin caché MSAL"})
-            return _cache
 
+def _store_cache(by_dni: dict, max_date: date | None, error: str | None = None) -> None:
+    with _LOCK:
+        _cache.update(
+            {
+                "loaded_at": time.time(),
+                "loaded_day": _lima_today(),
+                "by_dni": by_dni,
+                "max_date": max_date,
+                "ok": True,
+                "error": error,
+                "fail_until": 0.0,
+            }
+        )
+
+
+def _refresh_worker() -> None:
+    global _refreshing
     try:
+        if not excel_attendance_configured():
+            with _LOCK:
+                _cache.update(
+                    {
+                        "ok": False,
+                        "by_dni": {},
+                        "max_date": None,
+                        "error": "sin caché MSAL",
+                    }
+                )
+            return
+        from .attendance_db import attendance_configured, fetch_coverage_max_date
+
+        after = fetch_coverage_max_date() if attendance_configured() else None
+        today = _lima_today()
+        if after is not None and after >= today:
+            _store_cache({}, after)
+            logger.info("BD de asistencia al día (%s); no se descarga el Excel.", after)
+            return
         raw = download_excel_bytes(interactive=False)
-        by_dni, max_date = parse_attendance_excel(raw)
-        with _LOCK:
-            _cache.update(
-                {
-                    "loaded_at": time.time(),
-                    "by_dni": by_dni,
-                    "max_date": max_date,
-                    "ok": True,
-                    "error": None,
-                }
-            )
-            return _cache
+        by_dni, max_date = parse_attendance_excel(raw, after=after)
+        if max_date is None and after is not None:
+            max_date = after
+        _store_cache(by_dni, max_date)
+        logger.info(
+            "Excel asistencia: hueco desde %s → %s DNIs, última fecha %s (1 vez/día Lima).",
+            after.isoformat() if after else "el inicio",
+            len(by_dni),
+            max_date,
+        )
     except Exception as exc:
         logger.exception("Excel asistencia SharePoint: %s", exc)
         with _LOCK:
-            _cache.update(
-                {
-                    "loaded_at": time.time(),
-                    "by_dni": {},
-                    "max_date": None,
-                    "ok": False,
-                    "error": str(exc),
-                }
-            )
-            return _cache
+            # Conserva la última descarga buena; no borra datos por un fallo puntual.
+            _cache["error"] = str(exc)
+            _cache["fail_until"] = time.time() + _FAIL_BACKOFF_SEC
+            if not _cache.get("ok"):
+                _cache.update({"by_dni": {}, "max_date": None})
+    finally:
+        with _LOCK:
+            _refreshing = False
+
+
+def schedule_excel_refresh(*, force: bool = False) -> None:
+    """Arranca una descarga en segundo plano. Nunca bloquea al caller."""
+    global _refreshing
+    with _LOCK:
+        if _refreshing:
+            return
+        if not force and _cache_is_fresh():
+            return
+        if not force and float(_cache.get("fail_until") or 0) > time.time():
+            return
+        _refreshing = True
+    Thread(target=_refresh_worker, name="excel-asistencia", daemon=True).start()
+
+
+def warmup_excel_cache() -> None:
+    """Al arrancar o al iniciar sesión: una descarga si aún no hay datos de hoy."""
+    if excel_attendance_configured():
+        schedule_excel_refresh()
 
 
 def fetch_excel_attendance_dates(dni: str, year: int) -> set[date]:
-    cache = _load_cache()
-    if not cache.get("ok"):
+    snap = _snapshot()
+    if not snap.get("ok") or snap.get("loaded_day") != _lima_today():
+        schedule_excel_refresh()
+    if not snap.get("ok"):
         return set()
-    days = cache["by_dni"].get(str(dni).strip(), set())
+    days = snap["by_dni"].get(str(dni).strip(), set())
     return {d for d in days if d.year == year}
 
 
 def excel_coverage_max_date(year: int | None = None) -> date | None:
-    cache = _load_cache()
-    mx = cache.get("max_date")
+    snap = _snapshot()
+    if not snap.get("ok"):
+        schedule_excel_refresh()
+        return None
+    if snap.get("loaded_day") != _lima_today():
+        schedule_excel_refresh()
+    mx = snap.get("max_date")
     if not isinstance(mx, date):
         return None
     if year is not None and mx.year != year:
         best: date | None = None
-        for days in cache.get("by_dni", {}).values():
+        for days in snap.get("by_dni", {}).values():
             for d in days:
                 if d.year == year and (best is None or d > best):
                     best = d
@@ -371,4 +454,7 @@ def excel_coverage_max_date(year: int | None = None) -> date | None:
 def excel_attendance_ok() -> bool:
     if not excel_attendance_configured():
         return False
-    return bool(_load_cache().get("ok"))
+    snap = _snapshot()
+    if not snap.get("ok") or snap.get("loaded_day") != _lima_today():
+        schedule_excel_refresh()
+    return bool(snap.get("ok"))

@@ -1,6 +1,7 @@
 from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException
 
+from ..attendance_excel import warmup_excel_cache
 from ..auth import get_current_user, load_user_by_email, make_session_token
 from ..microsoft import poll_device_flow, start_device_flow
 
@@ -35,6 +36,7 @@ def microsoft_poll(body: PollIn):
             403,
             f"La cuenta {result['email']} no está autorizada para usar esta aplicación, o está inactiva.",
         )
+    warmup_excel_cache()
     return {
         "status": "ok",
         "access_token": make_session_token(user["correo"]),
@@ -45,4 +47,5 @@ def microsoft_poll(body: PollIn):
 
 @router.get("/me")
 def me(user: dict = Depends(get_current_user)):
+    warmup_excel_cache()
     return user

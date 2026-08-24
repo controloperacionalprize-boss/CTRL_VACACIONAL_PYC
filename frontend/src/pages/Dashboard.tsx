@@ -60,7 +60,7 @@ export function DashboardPage() {
       year: filters.year,
       empresa: filters.empresas.includes("TODAS") ? undefined : filters.empresas,
       gerencia: filters.gerencias.includes("TODAS") ? undefined : filters.gerencias,
-      division: filters.divisiones.includes("TODAS") ? undefined : filters.divisiones,
+      area: filters.areas.includes("TODAS") ? undefined : filters.areas,
     }),
     [filters]
   );

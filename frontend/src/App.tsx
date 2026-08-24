@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
-import { api } from "./api";
+import { api, qs } from "./api";
 import { Login } from "./pages/Login";
 import { Shell } from "./pages/Shell";
 import { PlanPage } from "./pages/Plan";
@@ -15,12 +15,12 @@ const yearNow = new Date().getFullYear();
 export function App() {
   const [user, setUser] = useState<User | null>(null);
   const [ready, setReady] = useState(false);
-  const [options, setOptions] = useState({ empresas: [] as string[], gerencias: [] as string[], divisiones: [] as string[] });
+  const [options, setOptions] = useState({ empresas: [] as string[], gerencias: [] as string[], areas: [] as string[] });
   const [filters, setFilters] = useState<Filters>({
     year: yearNow,
     empresas: ["TODAS"],
     gerencias: ["TODAS"],
-    divisiones: ["TODAS"],
+    areas: ["TODAS"],
   });
 
   function logout() {
@@ -42,8 +42,30 @@ export function App() {
 
   useEffect(() => {
     if (!user) return;
-    api<{ empresas: string[]; gerencias: string[]; divisiones: string[] }>("/api/filters").then(setOptions);
-  }, [user]);
+    const query = {
+      empresa: filters.empresas.includes("TODAS") ? undefined : filters.empresas,
+      gerencia: filters.gerencias.includes("TODAS") ? undefined : filters.gerencias,
+      area: filters.areas.includes("TODAS") ? undefined : filters.areas,
+    };
+    api<{ empresas: string[]; gerencias: string[]; areas: string[] }>(`/api/filters${qs(query)}`).then((opts) => {
+      setOptions(opts);
+      setFilters((prev) => {
+        const keep = (selected: string[], available: string[]) =>
+          selected.includes("TODAS") || available.includes(selected[0] || "") ? selected : (["TODAS"] as string[]);
+        const empresas = keep(prev.empresas, opts.empresas);
+        const gerencias = keep(prev.gerencias, opts.gerencias);
+        const areas = keep(prev.areas, opts.areas);
+        if (
+          empresas[0] === prev.empresas[0] &&
+          gerencias[0] === prev.gerencias[0] &&
+          areas[0] === prev.areas[0]
+        ) {
+          return prev;
+        }
+        return { ...prev, empresas, gerencias, areas };
+      });
+    });
+  }, [user, filters.empresas, filters.gerencias, filters.areas]);
 
   if (!ready) return <div className="p-10 text-sm text-muted-foreground">Abriendo la aplicación…</div>;
 

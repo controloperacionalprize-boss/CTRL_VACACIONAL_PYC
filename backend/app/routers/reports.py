@@ -51,14 +51,14 @@ def export_plan(
     user: dict = Depends(get_current_user),
     empresa: list[str] | None = Query(default=None),
     gerencia: list[str] | None = Query(default=None),
-    division: list[str] | None = Query(default=None),
+    area: list[str] | None = Query(default=None),
     label: str = "PLAN",
 ):
     today = today_lima()
     cy, cw, _ = today.isocalendar()
     with get_conn(write=False) as conn:
         cur = conn.cursor()
-        employees = list_employees(cur, user, empresa, gerencia, division)
+        employees = list_employees(cur, user, empresa, gerencia, area)
         daily_set, targets = load_scope_plan(cur, year, employees)
         dnis = [e["dni"] for e in employees]
         log_rows = []

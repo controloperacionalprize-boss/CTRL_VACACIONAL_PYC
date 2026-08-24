@@ -15,7 +15,7 @@ export type Filters = {
   year: number;
   empresas: string[];
   gerencias: string[];
-  divisiones: string[];
+  areas: string[];
 };
 
 export type AppState = {
@@ -24,7 +24,7 @@ export type AppState = {
   logout: () => void;
   filters: Filters;
   setFilters: (f: Filters) => void;
-  options: { empresas: string[]; gerencias: string[]; divisiones: string[] };
+  options: { empresas: string[]; gerencias: string[]; areas: string[] };
   setOptions: (o: AppState["options"]) => void;
 };
 

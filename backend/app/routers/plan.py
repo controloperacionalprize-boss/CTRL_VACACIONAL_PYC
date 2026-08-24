@@ -74,7 +74,7 @@ class WeekPatch(BaseModel):
     start_date: date | None = None
     empresa: list[str] | None = None
     gerencia: list[str] | None = None
-    division: list[str] | None = None
+    area: list[str] | None = None
 
     @field_validator("start_date", mode="before")
     @classmethod
@@ -99,7 +99,7 @@ class ConsecutiveIn(BaseModel):
     days: int
     empresa: list[str] | None = None
     gerencia: list[str] | None = None
-    division: list[str] | None = None
+    area: list[str] | None = None
 
     @field_validator("start_date", mode="before")
     @classmethod
@@ -130,7 +130,7 @@ class DailyPatch(BaseModel):
     dates: list[date]
     empresa: list[str] | None = None
     gerencia: list[str] | None = None
-    division: list[str] | None = None
+    area: list[str] | None = None
 
 
 @router.get("")
@@ -139,14 +139,14 @@ def get_plan(
     user: dict = Depends(get_current_user),
     empresa: list[str] | None = Query(default=None),
     gerencia: list[str] | None = Query(default=None),
-    division: list[str] | None = Query(default=None),
+    area: list[str] | None = Query(default=None),
     q: str = Query(default=""),
 ):
     today = today_lima()
     current_year, current_week, _ = today.isocalendar()
     with get_conn(write=False) as conn:
         cur = conn.cursor()
-        employees = list_employees(cur, user, empresa, gerencia, division, q)
+        employees = list_employees(cur, user, empresa, gerencia, area, q)
         daily_set, targets = load_scope_plan(cur, year, employees)
         dnis = [e["dni"] for e in employees]
         counts = {}
@@ -511,11 +511,11 @@ def validate(
     user: dict = Depends(get_current_user),
     empresa: list[str] | None = Query(default=None),
     gerencia: list[str] | None = Query(default=None),
-    division: list[str] | None = Query(default=None),
+    area: list[str] | None = Query(default=None),
 ):
     with get_conn(write=False) as conn:
         cur = conn.cursor()
-        employees = list_employees(cur, user, empresa, gerencia, division)
+        employees = list_employees(cur, user, empresa, gerencia, area)
         daily_set, targets = load_scope_plan(cur, year, employees)
     errors, warnings, groups = validate_plan(employees, targets, daily_set, year)
     return {

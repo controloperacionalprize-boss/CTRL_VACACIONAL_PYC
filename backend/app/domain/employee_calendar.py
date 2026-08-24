@@ -6,6 +6,11 @@ from .calendar import DERECHO_ANUAL, format_antiguedad, group_consecutive_dates,
 from .holidays_pe import peru_holidays
 
 
+def exento_control_asistencia(worker) -> bool:
+    """Directivos suelen no marcar biométrico pero sí laboran: no pintar falta ni asistencia."""
+    cargo = (worker.get("cargo_actual") or "").strip().lower()
+    return any(k in cargo for k in ("jefe", "gerente", "sub gerente"))
+
 def employee_calendar_payload(
     worker,
     anio: int,
@@ -19,6 +24,7 @@ def employee_calendar_payload(
 
     vac = set(fechas)
     asist = set(asistencia or ())
+    exento = exento_control_asistencia(worker)
     holidays = peru_holidays(anio)
     today = today_lima()
     desde = f_ingreso if isinstance(f_ingreso, date) else date(anio, 1, 1)
@@ -40,6 +46,7 @@ def employee_calendar_payload(
             no_laborables.append(d.isoformat())
         elif (
             attendance_ok
+            and not exento
             and desde <= d <= hasta
             and d not in vac
             and d not in asist
@@ -80,10 +87,11 @@ def employee_calendar_payload(
         "asistencia": sorted(
             x.isoformat()
             for x in asist
-            if not isinstance(f_ingreso, date) or x >= f_ingreso
+            if not exento and (not isinstance(f_ingreso, date) or x >= f_ingreso)
         ),
         "sin_marcacion": sin_marcacion,
         "no_laborables": no_laborables,
         "attendance_ok": attendance_ok,
+        "exento_marcacion": exento,
         "periodos": periodos,
     }

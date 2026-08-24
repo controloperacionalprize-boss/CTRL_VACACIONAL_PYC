@@ -119,3 +119,30 @@ def fetch_attendance_dates(dni: str, year: int) -> set[date]:
     except Exception:
         logger.exception("Asistencia: fallo leyendo DNI=%s anio=%s", dni, year)
         return set()
+
+
+def fetch_coverage_max_date() -> date | None:
+    """Última fecha de marcación en la BD (todas las personas). None si no hay datos."""
+    if not attendance_configured():
+        return None
+    s = get_settings()
+    try:
+        schema = _safe_ident(s.attendance_schema, "public")
+        table = _safe_ident(s.attendance_table, "marcaciones")
+        date_col = _safe_ident(s.attendance_date_column, "fecha")
+    except ValueError as exc:
+        logger.warning("%s", exc)
+        return None
+    sql = f'SELECT MAX("{date_col}"::date) AS fecha FROM "{schema}"."{table}"'
+    try:
+        with _conn() as conn:
+            if conn is None:
+                return None
+            with conn.cursor() as cur:
+                cur.execute(sql)
+                row = cur.fetchone() or {}
+                fecha = row.get("fecha")
+                return fecha if isinstance(fecha, date) else None
+    except Exception:
+        logger.exception("Asistencia: no se pudo leer la fecha máxima de la BD")
+        return None

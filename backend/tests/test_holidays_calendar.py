@@ -64,3 +64,61 @@ def test_sin_marcacion_solo_desde_fecha_ingreso():
     # 21/04/2026 = martes: si es <= hoy, cuenta como falta
     if date.today() >= date(2026, 4, 21):
         assert "2026-04-21" in payload["sin_marcacion"]
+
+
+def test_jefe_no_pinta_falta_ni_asistencia():
+    worker = {
+        "dni": "1",
+        "nombre": "Boss",
+        "empresa": "X",
+        "area": "A",
+        "cargo_actual": "Jefe de Tesorería",
+        "fecha_ingreso": "2026-01-01",
+        "gerencia": "G",
+    }
+    payload = employee_calendar_payload(
+        worker,
+        2026,
+        [date(2026, 8, 21)],
+        asistencia={date(2026, 8, 20)},
+        attendance_ok=True,
+    )
+    assert payload["exento_marcacion"] is True
+    assert payload["asistencia"] == []
+    assert "2026-08-19" not in payload["sin_marcacion"]
+    assert "2026-08-21" in payload["fechas"]
+
+
+def test_gerente_no_pinta_falta_ni_asistencia():
+    worker = {
+        "dni": "2",
+        "nombre": "Gerente",
+        "empresa": "X",
+        "area": "A",
+        "cargo_actual": "Gerente de Administración y Finanzas",
+        "fecha_ingreso": "2026-01-01",
+        "gerencia": "G",
+    }
+    payload = employee_calendar_payload(
+        worker, 2026, [], asistencia={date(2026, 8, 20)}, attendance_ok=True
+    )
+    assert payload["exento_marcacion"] is True
+    assert payload["asistencia"] == []
+    assert "2026-08-19" not in payload["sin_marcacion"]
+
+
+def test_sub_gerente_no_pinta_falta_ni_asistencia():
+    worker = {
+        "dni": "3",
+        "nombre": "Sub",
+        "empresa": "X",
+        "area": "A",
+        "cargo_actual": "Sub Gerente Agrícola",
+        "fecha_ingreso": "2026-01-01",
+        "gerencia": "G",
+    }
+    payload = employee_calendar_payload(
+        worker, 2026, [], asistencia=set(), attendance_ok=True
+    )
+    assert payload["exento_marcacion"] is True
+    assert "2026-08-19" not in payload["sin_marcacion"]

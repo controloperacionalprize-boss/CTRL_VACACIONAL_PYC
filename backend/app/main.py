@@ -4,6 +4,7 @@ from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from .attendance_excel import warmup_excel_cache
 from .config import get_settings
 from .db import check_connection, close_pool
 from .attendance_db import close_attendance_pool
@@ -15,11 +16,12 @@ from .routers.plan import router as plan_router
 from .routers.reports import router as reports_router
 
 # Cambia con cada fix de deploy para verificar en /api/version qué código está vivo.
-DEPLOY_MARK = "asistencia-msal-sharepoint-v2"
+DEPLOY_MARK = "excel-hueco-vs-bd-v1"
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    warmup_excel_cache()
     yield
     close_pool()
     close_attendance_pool()

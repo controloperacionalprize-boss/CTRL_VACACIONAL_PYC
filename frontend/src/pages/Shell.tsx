@@ -71,7 +71,7 @@ function FiltersBlock({
       ) : (
         <p className="text-[11px] text-muted-foreground">Gerencia: {user?.gerencia}</p>
       )}
-      <Multi label="DIVISIÓN" values={options.divisiones} selected={filters.divisiones} onChange={(divisiones) => setFilters({ ...filters, divisiones })} />
+      <Multi label="ÁREA" values={options.areas} selected={filters.areas} onChange={(areas) => setFilters({ ...filters, areas })} />
     </div>
   );
 }
@@ -96,7 +96,8 @@ export function Shell() {
   const filterHint = [
     String(filters.year),
     filters.empresas.includes("TODAS") ? null : filters.empresas[0],
-    filters.divisiones.includes("TODAS") ? null : filters.divisiones[0],
+    filters.gerencias.includes("TODAS") ? null : filters.gerencias[0],
+    filters.areas.includes("TODAS") ? null : filters.areas[0],
   ]
     .filter(Boolean)
     .join(" · ");

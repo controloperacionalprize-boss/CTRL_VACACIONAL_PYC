@@ -116,7 +116,7 @@ export function ExportPage() {
       year: filters.year,
       empresa: filters.empresas.includes("TODAS") ? undefined : filters.empresas,
       gerencia: filters.gerencias.includes("TODAS") ? undefined : filters.gerencias,
-      division: filters.divisiones.includes("TODAS") ? undefined : filters.divisiones,
+      area: filters.areas.includes("TODAS") ? undefined : filters.areas,
     }),
     [filters]
   );
@@ -223,8 +223,8 @@ export function ExportPage() {
                 <dd className="max-w-[60%] truncate text-right font-medium">{labelList(filters.gerencias)}</dd>
               </div>
               <div className="flex justify-between gap-3">
-                <dt className="text-muted-foreground">División</dt>
-                <dd className="max-w-[60%] truncate text-right font-medium">{labelList(filters.divisiones)}</dd>
+                <dt className="text-muted-foreground">Área</dt>
+                <dd className="max-w-[60%] truncate text-right font-medium">{labelList(filters.areas)}</dd>
               </div>
               <div className="flex justify-between gap-3 border-t border-border pt-2">
                 <dt className="text-muted-foreground">Generado</dt>

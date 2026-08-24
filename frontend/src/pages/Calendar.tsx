@@ -2,7 +2,7 @@ import { useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode 
 import { CalendarCheck, CalendarClock, CalendarRange, Layers, PenLine } from "lucide-react";
 import { api, qs } from "../api";
 import { useApp } from "../state";
-import { Alert, Button, EmptyState, Field, Input, PageHeader, Select, cn } from "../components/ui";
+import { Alert, EmptyState, Field, Input, PageHeader, Select, cn } from "../components/ui";
 import { EmpAvatar } from "../components/EmpAvatar";
 
 type Emp = { dni: string; nombre: string; foto_url?: string | null };
@@ -66,13 +66,12 @@ const DAY_CLASS: Record<Exclude<DayKind, null>, string> = {
   preingreso: "bg-muted/40 text-muted-foreground/55 opacity-45",
 };
 
-const LEGEND: { cls: string; label: string; dot?: boolean }[] = [
+const LEGEND: { cls: string; label: string }[] = [
   { cls: "bg-primary/15 ring-1 ring-primary/30", label: "Vacaciones" },
   { cls: "bg-success-muted ring-1 ring-success/30", label: "Asistencia" },
   { cls: "bg-error-muted ring-1 ring-error/30", label: "Sin marcación" },
   { cls: "bg-muted ring-1 ring-border", label: "No laborable" },
   { cls: "bg-muted/40 opacity-45 ring-1 ring-border/60", label: "Antes del ingreso" },
-  { cls: "rounded-full bg-foreground", label: "Hoy", dot: true },
 ];
 
 function isoDay(year: number, month: number, day: number) {
@@ -110,7 +109,6 @@ function MiniCal({
   falta,
   nolab,
   ingresoIso,
-  monthRef,
 }: {
   year: number;
   month: number;
@@ -119,7 +117,6 @@ function MiniCal({
   falta: Set<string>;
   nolab: Set<string>;
   ingresoIso: string | null;
-  monthRef?: (el: HTMLDivElement | null) => void;
 }) {
   const first = new Date(year, month, 1);
   const startPad = (first.getDay() + 6) % 7;
@@ -130,12 +127,10 @@ function MiniCal({
   ];
   while (cells.length % 7) cells.push(null);
 
-  const today = new Date();
-  const todayIso = isoDay(today.getFullYear(), today.getMonth(), today.getDate());
   const kindAt = (iso: string) => dayKind(iso, vac, asist, falta, nolab, ingresoIso);
 
   return (
-    <div ref={monthRef} className="flex h-full min-h-0 flex-col rounded-lg border border-border/70 p-2">
+    <div className="flex h-full min-h-0 flex-col rounded-lg border border-border/70 p-2">
       <div className="mb-1 shrink-0 text-[10px] font-semibold">{MESES[month]}</div>
       <div className="mb-0.5 grid shrink-0 grid-cols-7 text-center text-[7px] text-muted-foreground">
         {["L", "M", "X", "J", "V", "S", "D"].map((d, i) => (
@@ -149,7 +144,6 @@ function MiniCal({
           const kind = kindAt(iso);
           const prevKind = d > 1 ? kindAt(isoDay(year, month, d - 1)) : null;
           const nextKind = d < daysInMonth ? kindAt(isoDay(year, month, d + 1)) : null;
-          const isToday = iso === todayIso;
           const round =
             kind === "vacacion"
               ? `${prevKind === "vacacion" ? "" : "rounded-l-full"} ${nextKind === "vacacion" ? "" : "rounded-r-full"}`
@@ -164,8 +158,7 @@ function MiniCal({
               title={title}
               className={cn(
                 "relative flex min-h-[18px] items-center justify-center text-[8px]",
-                kind ? `${DAY_CLASS[kind]} ${round}` : "text-foreground",
-                isToday && kind !== "preingreso" && "ring-1 ring-inset ring-primary"
+                kind ? `${DAY_CLASS[kind]} ${round}` : "text-foreground"
               )}
             >
               {d}
@@ -206,12 +199,11 @@ export function CalendarPage() {
   const [cal, setCal] = useState<Cal | null>(null);
   const [loadError, setLoadError] = useState("");
   const boxRef = useRef<HTMLDivElement>(null);
-  const monthEls = useRef<(HTMLDivElement | null)[]>([]);
   const params = useMemo(
     () => ({
       empresa: filters.empresas.includes("TODAS") ? undefined : filters.empresas,
       gerencia: filters.gerencias.includes("TODAS") ? undefined : filters.gerencias,
-      division: filters.divisiones.includes("TODAS") ? undefined : filters.divisiones,
+      area: filters.areas.includes("TODAS") ? undefined : filters.areas,
     }),
     [filters]
   );
@@ -299,14 +291,6 @@ export function CalendarPage() {
     setDni(p.dni);
     setQ(`${p.nombre} · ${p.dni}`);
     setOpen(false);
-  }
-
-  function goToday() {
-    const now = new Date();
-    if (now.getFullYear() !== year) setYear(now.getFullYear());
-    requestAnimationFrame(() => {
-      monthEls.current[now.getMonth()]?.scrollIntoView({ behavior: "smooth", block: "center" });
-    });
   }
 
   const vac = useMemo(() => new Set(cal?.fechas || []), [cal?.fechas]);
@@ -407,18 +391,10 @@ export function CalendarPage() {
               <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[10px] text-muted-foreground">
                 {LEGEND.map((item) => (
                   <span key={item.label} className="inline-flex items-center gap-1">
-                    <span
-                      className={cn(
-                        "h-2 w-2",
-                        item.dot === true ? "rounded-full bg-foreground" : cn("rounded-sm", item.cls)
-                      )}
-                    />
+                    <span className={cn("h-2 w-2 rounded-sm", item.cls)} />
                     {item.label}
                   </span>
                 ))}
-                <Button type="button" variant="outline" className="h-7 px-2.5 text-[11px]" onClick={goToday}>
-                  Hoy
-                </Button>
               </div>
             </div>
 
@@ -433,9 +409,6 @@ export function CalendarPage() {
                   falta={falta}
                   nolab={nolab}
                   ingresoIso={ingresoIso}
-                  monthRef={(el) => {
-                    monthEls.current[m] = el;
-                  }}
                 />
               ))}
             </div>

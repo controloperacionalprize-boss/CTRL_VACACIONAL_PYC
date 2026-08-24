@@ -30,7 +30,7 @@ def employee_from_row(row) -> dict:
     return enrich_employee_photo(emp)
 
 
-def _scope_sql(user: dict, empresa, gerencia, division, q: str | None = None) -> tuple[str, list]:
+def _scope_sql(user: dict, empresa, gerencia, area, q: str | None = None) -> tuple[str, list]:
     sql = " FROM employees WHERE activo = TRUE"
     params: list = []
     if not user.get("is_admin"):
@@ -42,9 +42,9 @@ def _scope_sql(user: dict, empresa, gerencia, division, q: str | None = None) ->
     if user.get("is_admin") and gerencia and "TODAS" not in gerencia:
         sql += " AND lower(gerencia) = ANY(%s)"
         params.append([x.lower() for x in gerencia])
-    if division and "TODAS" not in division:
-        sql += " AND lower(division) = ANY(%s)"
-        params.append([x.lower() for x in division])
+    if area and "TODAS" not in area:
+        sql += " AND lower(area) = ANY(%s)"
+        params.append([x.lower() for x in area])
     needle = (q or "").strip()
     if needle:
         like = f"%{needle}%"
@@ -56,8 +56,8 @@ def _scope_sql(user: dict, empresa, gerencia, division, q: str | None = None) ->
     return sql, params
 
 
-def list_employees(cur, user: dict, empresa=None, gerencia=None, division=None, q: str | None = None):
-    where, params = _scope_sql(user, empresa, gerencia, division, q)
+def list_employees(cur, user: dict, empresa=None, gerencia=None, area=None, q: str | None = None):
+    where, params = _scope_sql(user, empresa, gerencia, area, q)
     cur.execute(f"SELECT {EMP_COLS}{where} ORDER BY nombre", params)
     return [employee_from_row(r) for r in cur.fetchall()]
 
@@ -72,24 +72,27 @@ def get_employee(cur, user: dict, dni: str) -> dict | None:
     row = cur.fetchone()
     return employee_from_row(row) if row else None
 
+def _distinct_values(cur, user: dict, column: str, empresa=None, gerencia=None, area=None) -> list[str]:
+    filters = {"empresa": empresa, "gerencia": gerencia, "area": area}
+    filters[column] = None
+    where, params = _scope_sql(user, filters["empresa"], filters["gerencia"], filters["area"])
+    cur.execute(
+        f"SELECT DISTINCT {column}{where} AND {column} IS NOT NULL AND {column} <> '' ORDER BY {column}",
+        params,
+    )
+    return [r[column] for r in cur.fetchall()]
 
-def filter_options(cur, user: dict):
-    where, params = _scope_sql(user, None, None, None)
-    cur.execute(f"SELECT empresa, gerencia, division{where}", params)
-    empresas: set[str] = set()
-    gerencias: set[str] = set()
-    divisiones: set[str] = set()
-    for r in cur.fetchall():
-        if r["empresa"]:
-            empresas.add(r["empresa"])
-        if r["gerencia"]:
-            gerencias.add(r["gerencia"])
-        if r["division"]:
-            divisiones.add(r["division"])
+
+def filter_options(cur, user: dict, empresa=None, gerencia=None, area=None):
+    empresas = _distinct_values(cur, user, "empresa", empresa, gerencia, area)
+    gerencias = _distinct_values(cur, user, "gerencia", empresa, gerencia, area)
+    if not user.get("is_admin"):
+        gerencias = [g for g in gerencias if g == user.get("gerencia")] or [user.get("gerencia")]
+    areas = _distinct_values(cur, user, "area", empresa, gerencia, area)
     return {
-        "empresas": sorted(empresas),
-        "gerencias": sorted(gerencias) if user.get("is_admin") else [user.get("gerencia")],
-        "divisiones": sorted(divisiones),
+        "empresas": empresas,
+        "gerencias": gerencias,
+        "areas": areas,
         "is_admin": user.get("is_admin"),
     }
 
