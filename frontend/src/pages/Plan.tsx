@@ -3,6 +3,7 @@ import { api, qs } from "../api";
 import { SEM_COLORS, weekLocked } from "../lib/semaforo";
 import { useApp } from "../state";
 import { Alert, Button, cn, EmptyState, Field, Input, Kpi, PageHeader } from "../components/ui";
+import { EmpAvatar } from "../components/EmpAvatar";
 import { CalendarClock, CalendarDays, CalendarPlus, CalendarRange, Users, UserCheck, UserX } from "lucide-react";
 
 /** Derecho anual (mismo tope que backend DERECHO_ANUAL). */
@@ -22,6 +23,7 @@ type Worker = {
   weeks: number[];
   total_dias: number;
   cambios: number;
+  foto_url?: string | null;
   /** false = aún no cumple el año; solo puede pedir adelanto hasta tope_dias. */
   record_cumplido?: boolean;
   /** Tope real programable: 30 si ya cumplió el récord, o lo acumulado (adelanto) si no. */
@@ -225,7 +227,10 @@ const WorkerRow = memo(function WorkerRow({
   return (
     <tr className="hover:bg-muted/60" style={{ contentVisibility: "auto", containIntrinsicSize: "auto 32px" }}>
       <td className="sticky left-0 z-10 whitespace-nowrap border-b border-border bg-card px-2.5 py-1 font-semibold">
-        {w.nombre}
+        <span className="inline-flex max-w-[220px] items-center gap-2">
+          <EmpAvatar nombre={w.nombre} fotoUrl={w.foto_url} className="h-7 w-7 text-[9px]" />
+          <span className="truncate">{w.nombre}</span>
+        </span>
       </td>
       <td className="border-b border-border px-2.5 py-1 text-muted-foreground">{w.dni}</td>
       <td className="border-b border-border px-2.5 py-1">{w.area}</td>
@@ -276,11 +281,14 @@ const WorkerCard = memo(function WorkerCard({
   return (
     <article className="rounded-xl border border-border bg-card p-3.5 shadow-[var(--shadow-card)]">
       <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <p className="truncate text-[14px] font-semibold">{w.nombre}</p>
-          <p className="mt-0.5 text-[12px] text-muted-foreground">
-            {w.dni} · {w.area || w.tipo_personal}
-          </p>
+        <div className="flex min-w-0 items-center gap-2.5">
+          <EmpAvatar nombre={w.nombre} fotoUrl={w.foto_url} className="h-9 w-9 text-[11px]" />
+          <div className="min-w-0">
+            <p className="truncate text-[14px] font-semibold">{w.nombre}</p>
+            <p className="mt-0.5 text-[12px] text-muted-foreground">
+              {w.dni} · {w.area || w.tipo_personal}
+            </p>
+          </div>
         </div>
         <span
           className={cn(
@@ -334,6 +342,7 @@ export function PlanPage() {
   const [modal, setModal] = useState<{
     dni: string;
     nombre: string;
+    foto_url?: string | null;
     week: number;
     days: number;
     prevDays: number;
@@ -571,7 +580,16 @@ export function PlanPage() {
       setOk("");
       // No pintar N>7 en una sola celda: el valor real llega al guardar (derrame).
       if (days <= 7) applyLocalWeeks(w.dni, { [week]: days });
-      setModal({ dni: w.dni, nombre: w.nombre, week, days, prevDays, disponibles, tope: MAX_VAC_DAYS });
+      setModal({
+        dni: w.dni,
+        nombre: w.nombre,
+        foto_url: w.foto_url,
+        week,
+        days,
+        prevDays,
+        disponibles,
+        tope: MAX_VAC_DAYS,
+      });
     },
     [applyLocalWeeks, setWeek]
   );
@@ -862,7 +880,10 @@ export function PlanPage() {
                       }`}
                       onClick={() => pickConsec(w)}
                     >
-                      <span className="min-w-0 truncate font-medium">{w.nombre}</span>
+                      <span className="flex min-w-0 items-center gap-2">
+                        <EmpAvatar nombre={w.nombre} fotoUrl={w.foto_url} className="h-7 w-7 text-[9px]" />
+                        <span className="min-w-0 truncate font-medium">{w.nombre}</span>
+                      </span>
                       <span className="shrink-0 font-data text-[11px] text-muted-foreground">{w.dni}</span>
                     </button>
                   ))
@@ -1069,7 +1090,10 @@ export function PlanPage() {
                             }`}
                             onClick={() => pickConsec(w)}
                           >
-                            <span className="min-w-0 truncate font-medium">{w.nombre}</span>
+                            <span className="flex min-w-0 items-center gap-2">
+                              <EmpAvatar nombre={w.nombre} fotoUrl={w.foto_url} className="h-7 w-7 text-[9px]" />
+                              <span className="min-w-0 truncate font-medium">{w.nombre}</span>
+                            </span>
                             <span className="shrink-0 font-data text-[11px] text-muted-foreground">{w.dni}</span>
                           </button>
                         ))
@@ -1248,8 +1272,11 @@ export function PlanPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--overlay)] p-4">
           <div className="w-full max-w-[440px] rounded-xl border border-border bg-card shadow-[0_8px_24px_#1E2C3A14]">
             <div className="space-y-1.5 px-5 pt-5">
-              <h3 className="text-[15px] font-semibold">
-                Semana {modal.week} · {modal.nombre}
+              <h3 className="flex items-center gap-2.5 text-[15px] font-semibold">
+                <EmpAvatar nombre={modal.nombre} fotoUrl={modal.foto_url} className="h-8 w-8 text-[10px]" />
+                <span className="min-w-0 truncate">
+                  Semana {modal.week} · {modal.nombre}
+                </span>
               </h3>
               <p className="text-[13px] text-muted-foreground">
                 Elige el día de inicio ·{" "}
