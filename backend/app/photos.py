@@ -233,6 +233,35 @@ def resolve_foto_url(nombre: str | None) -> str | None:
     return None
 
 
+def resolve_user_foto_url(
+    *,
+    nombre: str | None = None,
+    correo: str | None = None,
+    usuario: str | None = None,
+) -> str | None:
+    """Foto del usuario logueado: usuario/correo primero, luego nombre."""
+    settings = get_settings()
+    if not settings.pictures_enabled:
+        return None
+    base = (settings.pictures_base_url or "").rstrip("/")
+    if not base:
+        return None
+    index = picture_index()
+    if not index:
+        return None
+
+    stems: list[str] = []
+    for cand in (usuario, usuario_from_email(correo)):
+        s = (cand or "").strip().lower()
+        if s and s not in stems:
+            stems.append(s)
+    for stem in stems:
+        hit = _url_for_stem(stem, index, base)
+        if hit:
+            return hit
+    return resolve_foto_url(nombre)
+
+
 def enrich_employee_photo(emp: dict) -> dict:
     if not emp.get("foto_url"):
         emp = {**emp, "foto_url": resolve_foto_url(emp.get("nombre"))}

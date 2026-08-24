@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { useApp } from "../state";
 import { Button, cn, Field, Select } from "../components/ui";
+import { EmpAvatar } from "../components/EmpAvatar";
 
 function Multi({
   label,
@@ -79,16 +80,9 @@ export function Shell() {
   const { user, logout, filters } = useApp();
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
+  const display = user?.nombre_persona || user?.nombre_usuario || "";
   const yearNow = new Date().getFullYear();
   const years = Array.from({ length: 5 }, (_, i) => yearNow - 1 + i);
-  const display = user?.nombre_persona || user?.nombre_usuario || "";
-  const initials = display
-    .split(" ")
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((p) => p[0])
-    .join("")
-    .toUpperCase();
 
   useEffect(() => {
     if (!filtersOpen && !moreOpen) return;
@@ -165,9 +159,7 @@ export function Shell() {
         </div>
 
         <div className="flex shrink-0 items-center gap-2.5 border-t border-border bg-sidebar p-4">
-          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-[11px] font-semibold text-primary-foreground">
-            {initials || "—"}
-          </div>
+          <EmpAvatar nombre={display} fotoUrl={user?.foto_url} className="h-8 w-8 text-[11px]" />
           <div className="min-w-0">
             <p className="truncate text-xs font-semibold">{display}</p>
             <p className="text-[11px] text-muted-foreground">{user?.is_admin ? "Admin · GTH" : user?.rol}</p>
@@ -276,9 +268,7 @@ export function Shell() {
               <span className="h-1 w-10 rounded-full bg-border" />
             </div>
             <div className="mb-3 flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary text-xs font-semibold text-primary-foreground">
-                {initials || "—"}
-              </div>
+              <EmpAvatar nombre={display} fotoUrl={user?.foto_url} className="h-10 w-10 text-xs" />
               <div className="min-w-0">
                 <p className="truncate text-sm font-semibold">{display}</p>
                 <p className="truncate text-[12px] text-muted-foreground">{user?.correo}</p>

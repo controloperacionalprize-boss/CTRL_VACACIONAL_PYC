@@ -8,21 +8,30 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from .config import get_settings
 from .db import get_conn
+from .photos import resolve_user_foto_url
 
 bearer = HTTPBearer(auto_error=False)
 
 
 def user_from_row(row) -> dict:
     rol = str(row["rol"]).upper()
+    correo = row["correo"]
+    usuario = row["usuario"]
+    nombre_persona = row["nombre_persona"]
     return {
-        "correo": row["correo"],
-        "usuario": row["usuario"],
+        "correo": correo,
+        "usuario": usuario,
         "nombre_usuario": row["nombre_usuario"],
-        "nombre_persona": row["nombre_persona"],
+        "nombre_persona": nombre_persona,
         "gerencia": row["gerencia"],
         "rol": rol,
         "activo": bool(row["activo"]),
         "is_admin": rol == "ADMIN",
+        "foto_url": resolve_user_foto_url(
+            nombre=nombre_persona or row["nombre_usuario"],
+            correo=correo,
+            usuario=usuario,
+        ),
     }
 
 

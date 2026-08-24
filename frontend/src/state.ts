@@ -8,6 +8,7 @@ export type User = {
   gerencia: string;
   rol: string;
   is_admin: boolean;
+  foto_url?: string | null;
 };
 
 export type Filters = {
