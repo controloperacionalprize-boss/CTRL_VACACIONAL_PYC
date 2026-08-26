@@ -13,7 +13,9 @@ export function authHeader(): HeadersInit {
 }
 
 function timeoutFor(path: string) {
-  return path.includes("/export") || path.includes("/documento") ? LONG_TIMEOUT_MS : DEFAULT_TIMEOUT_MS;
+  return path.includes("/export") || path.includes("/documento") || path.includes("/asistencia")
+    ? LONG_TIMEOUT_MS
+    : DEFAULT_TIMEOUT_MS;
 }
 
 async function request(path: string, init: RequestInit = {}): Promise<Response> {

@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import re
 from contextlib import contextmanager
-from datetime import date
+from datetime import date, datetime, time
 from urllib.parse import quote, urlparse, urlunparse
 
 import psycopg2
@@ -16,7 +16,15 @@ logger = logging.getLogger(__name__)
 
 _pool: SimpleConnectionPool | None = None
 _IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_IDENT_SPACES = re.compile(r"^[A-Za-zÁÉÍÓÚáéíóúÑñ0-9_ .º°\-]+$")
 _PLACEHOLDER = ("USUARIO", "PASSWORD", "NOMBRE_BD")
+
+
+def _quote_col(name: str) -> str:
+    n = (name or "").strip()
+    if not _IDENT_SPACES.match(n):
+        raise ValueError(f"Identificador SQL inválido: {name!r}")
+    return '"' + n.replace('"', "") + '"'
 
 
 def _safe_ident(name: str, fallback: str) -> str:
@@ -146,3 +154,83 @@ def fetch_coverage_max_date() -> date | None:
     except Exception:
         logger.exception("Asistencia: no se pudo leer la fecha máxima de la BD")
         return None
+
+
+def _as_time(value: object) -> time | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        value = value.time()
+    if isinstance(value, time):
+        if value.hour == 0 and value.minute == 0:
+            return None
+        return value
+    text = str(value).strip()
+    if not text:
+        return None
+    for fmt in ("%H:%M:%S", "%H:%M"):
+        try:
+            parsed = datetime.strptime(text[:8] if fmt.endswith("%S") else text[:5], fmt).time()
+            if parsed.hour == 0 and parsed.minute == 0:
+                return None
+            return parsed
+        except ValueError:
+            continue
+    return None
+
+
+def fetch_attendance_shifts(
+    dnis: list[str], start: date, end: date
+) -> dict[str, dict[date, dict]]:
+    """Min/max de Tiempo por DNI y fecha. Vacío si no hay columna de hora o no hay datos."""
+    if not attendance_configured() or not dnis or start > end:
+        return {}
+    s = get_settings()
+    try:
+        schema = _safe_ident(s.attendance_schema, "public")
+        table = _safe_ident(s.attendance_table, "marcaciones")
+        dni_col = _safe_ident(s.attendance_dni_column, "dni")
+        date_col = _safe_ident(s.attendance_date_column, "fecha")
+        time_col = _safe_ident(s.attendance_time_column, "Tiempo")
+        device_col = _quote_col("Nombre del dispositivo")
+    except ValueError as exc:
+        logger.warning("%s", exc)
+        return {}
+
+    sql = (
+        f'SELECT CAST("{dni_col}" AS text) AS dni, "{date_col}"::date AS fecha, '
+        f'MIN("{time_col}") FILTER (WHERE "{time_col}" IS NOT NULL AND "{time_col}" > TIME \'00:00:00\') AS entrada, '
+        f'MAX("{time_col}") FILTER (WHERE "{time_col}" IS NOT NULL AND "{time_col}" > TIME \'00:00:00\') AS salida, '
+        f'COUNT(*) FILTER (WHERE "{time_col}" IS NOT NULL AND "{time_col}" > TIME \'00:00:00\') AS n, '
+        f'COUNT(*) AS n_rows, '
+        f'(ARRAY_AGG({device_col}) FILTER (WHERE {device_col} IS NOT NULL))[1] AS dispositivo '
+        f'FROM "{schema}"."{table}" '
+        f'WHERE CAST("{dni_col}" AS text) = ANY(%s) '
+        f'AND "{date_col}"::date >= %s AND "{date_col}"::date <= %s '
+        f'GROUP BY 1, 2'
+    )
+    out: dict[str, dict[date, dict]] = {}
+    try:
+        with _conn() as conn:
+            if conn is None:
+                return {}
+            with conn.cursor() as cur:
+                cur.execute(sql, ([str(x).strip() for x in dnis], start, end))
+                for r in cur.fetchall():
+                    dni = str(r.get("dni") or "").strip()
+                    fecha = r.get("fecha")
+                    if not dni or not isinstance(fecha, date):
+                        continue
+                    n = int(r.get("n") or 0)
+                    n_rows = int(r.get("n_rows") or 0)
+                    out.setdefault(dni, {})[fecha] = {
+                        "entrada": _as_time(r.get("entrada")),
+                        "salida": _as_time(r.get("salida")),
+                        "n": n,
+                        "n_rows": n_rows,
+                        "dispositivo": str(r.get("dispositivo") or "").strip(),
+                    }
+    except Exception:
+        logger.exception("Asistencia: no se pudieron leer horas %s–%s", start, end)
+        return {}
+    return out

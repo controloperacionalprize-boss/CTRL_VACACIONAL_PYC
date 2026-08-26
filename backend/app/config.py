@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     attendance_table: str = "marcaciones"
     attendance_dni_column: str = "dni"
     attendance_date_column: str = "fecha"
+    attendance_time_column: str = "Tiempo"
 
     # Excel SharePoint HIK (completa huecos de la BD). Token: script MFA.
     attendance_excel_share_url: str = ""

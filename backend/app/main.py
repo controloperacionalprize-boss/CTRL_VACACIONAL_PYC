@@ -9,6 +9,9 @@ from .config import get_settings
 from .db import check_connection, close_pool
 from .attendance_db import close_attendance_pool
 from .routers.admin import router as admin_router
+# Módulo de Asistencia: en construcción, aún no listo para producción.
+# No se registra el router ni se corre su migración hasta retomarlo.
+# from .routers.asistencia import router as asistencia_router
 from .routers.auth import router as auth_router
 from .routers.catalog import router as catalog_router
 from .routers.dashboard import router as dashboard_router
@@ -49,6 +52,7 @@ app.include_router(admin_router)
 app.include_router(catalog_router)
 app.include_router(plan_router)
 app.include_router(dashboard_router)
+# app.include_router(asistencia_router)  # deshabilitado: módulo en construcción
 app.include_router(reports_router)
 
 

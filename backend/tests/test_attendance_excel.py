@@ -21,6 +21,7 @@ def _reset_xl_cache():
                 "ok": False,
                 "error": None,
                 "fail_until": 0.0,
+                "by_dni_shifts": {},
             }
         )
 
@@ -40,9 +41,28 @@ def test_parse_excel_documento_fecha():
     )
     with pd.ExcelWriter(buf, engine="openpyxl") as w:
         df.to_excel(w, sheet_name="AQ1", index=False)
-    by_dni, mx = parse_attendance_excel(buf.getvalue())
+    by_dni, mx, _shifts = parse_attendance_excel(buf.getvalue())
     assert by_dni["123"] == {date(2026, 8, 17), date(2026, 8, 18)}
     assert mx == date(2026, 8, 20)
+
+
+def test_parse_excel_con_hora():
+    buf = BytesIO()
+    df = pd.DataFrame(
+        {
+            "Documento": ["123", "123"],
+            "Fecha": ["19/08/2026", "19/08/2026"],
+            "Tiempo": ["06:50:00", "17:15:00"],
+        }
+    )
+    with pd.ExcelWriter(buf, engine="openpyxl") as w:
+        df.to_excel(w, sheet_name="AQ1", index=False)
+    by_dni, mx, shifts = parse_attendance_excel(buf.getvalue())
+    row = shifts["123"][date(2026, 8, 19)]
+    assert row["n"] == 2
+    assert str(row["entrada"])[:5] == "06:50"
+    assert str(row["salida"])[:5] == "17:15"
+    assert mx == date(2026, 8, 19)
 
 
 def test_parse_excel_solo_hueco_despues_de_bd():
@@ -55,7 +75,7 @@ def test_parse_excel_solo_hueco_despues_de_bd():
     )
     with pd.ExcelWriter(buf, engine="openpyxl") as w:
         df.to_excel(w, sheet_name="AQ1", index=False)
-    by_dni, mx = parse_attendance_excel(buf.getvalue(), after=date(2026, 8, 16))
+    by_dni, mx, _shifts = parse_attendance_excel(buf.getvalue(), after=date(2026, 8, 16))
     assert by_dni["123"] == {date(2026, 8, 17), date(2026, 8, 23)}
     assert mx == date(2026, 8, 23)
     assert date(2026, 8, 16) not in by_dni["123"]
@@ -82,6 +102,25 @@ def test_merge_excel_completa_despues_de_bd(monkeypatch):
     assert date(2026, 8, 17) in merged
     assert date(2026, 8, 23) in merged
     assert coverage == date(2026, 8, 23)
+
+
+def test_merge_turnos_excel_completa_hora_si_bd_solo_tiene_fecha(monkeypatch):
+    from datetime import time
+
+    from app.attendance import fetch_merged_shifts
+
+    d = date(2026, 8, 19)
+    db = {"123": {d: {"entrada": None, "salida": None, "n": 0, "n_rows": 2}}}
+    xl = {"123": {d: {"entrada": time(6, 50), "salida": time(17, 15), "n": 2, "n_rows": 2}}}
+    monkeypatch.setattr("app.attendance.attendance_configured", lambda: True)
+    monkeypatch.setattr("app.attendance.excel_attendance_configured", lambda: True)
+    monkeypatch.setattr("app.attendance.fetch_attendance_shifts", lambda *a, **k: db)
+    monkeypatch.setattr("app.attendance.fetch_excel_shifts", lambda *a, **k: xl)
+    monkeypatch.setattr("app.attendance.fetch_coverage_max_date", lambda: d)
+    merged, times_ok = fetch_merged_shifts(["123"], d, d)
+    assert times_ok is True
+    assert merged["123"][d]["entrada"] == time(6, 50)
+    assert merged["123"][d]["salida"] == time(17, 15)
 
 
 def test_coverage_until_no_pinta_faltas_despues():

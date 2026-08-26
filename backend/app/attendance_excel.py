@@ -8,7 +8,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import date, datetime
+from datetime import date, datetime, time as clock_time
 from io import BytesIO
 from pathlib import Path
 from threading import Lock, Thread
@@ -45,6 +45,7 @@ _cache: dict = {
     "ok": False,
     "error": None,
     "fail_until": 0.0,
+    "by_dni_shifts": {},
 }
 
 
@@ -53,7 +54,10 @@ def _lima_today() -> date:
 
 
 def _cache_is_fresh() -> bool:
-    return bool(_cache.get("ok") and _cache.get("loaded_day") == _lima_today())
+    if not (bool(_cache.get("ok")) and _cache.get("loaded_day") == _lima_today()):
+        return False
+    # La BD puede traer la fecha del día sin hora; hay que conservar el Excel con Tiempo.
+    return bool(_cache.get("by_dni_shifts"))
 
 
 def _excel_url() -> str:
@@ -280,6 +284,51 @@ def _to_date(value: object) -> date | None:
     return None
 
 
+def _to_clock(value: object) -> clock_time | None:
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return None
+    hm: clock_time | None = None
+    if isinstance(value, datetime):
+        hm = value.time()
+    elif isinstance(value, clock_time):
+        hm = value
+    elif isinstance(value, pd.Timestamp):
+        hm = value.to_pydatetime().time()
+    else:
+        text = str(value).strip()
+        if not text or text.lower() in {"nan", "nat", "none"}:
+            return None
+        for fmt in ("%H:%M:%S", "%H:%M"):
+            try:
+                hm = datetime.strptime(text[:8] if fmt.endswith("S") else text[:5], fmt).time()
+                break
+            except ValueError:
+                continue
+        if hm is None:
+            ts = pd.to_datetime(text, errors="coerce")
+            if pd.notna(ts):
+                hm = ts.to_pydatetime().time()
+    if hm is None or (hm.hour == 0 and hm.minute == 0):
+        return None
+    return hm
+
+
+def _acc_shift(store: dict, dni: str, fecha: date, hm: clock_time | None, dispositivo: str | None = None) -> None:
+    slot = store.setdefault(dni, {}).setdefault(
+        fecha, {"entrada": None, "salida": None, "n": 0, "n_rows": 0, "dispositivo": ""}
+    )
+    slot["n_rows"] = int(slot.get("n_rows") or 0) + 1
+    if dispositivo and not slot.get("dispositivo"):
+        slot["dispositivo"] = str(dispositivo).strip()
+    if hm is None or (hm.hour == 0 and hm.minute == 0):
+        return
+    slot["n"] = int(slot.get("n") or 0) + 1
+    if slot["entrada"] is None or hm < slot["entrada"]:
+        slot["entrada"] = hm
+    if slot["salida"] is None or hm > slot["salida"]:
+        slot["salida"] = hm
+
+
 def _to_dni(value: object) -> str:
     if value is None or (isinstance(value, float) and pd.isna(value)):
         return ""
@@ -293,9 +342,10 @@ def _to_dni(value: object) -> str:
 
 def parse_attendance_excel(
     content: bytes, *, after: date | None = None
-) -> tuple[dict[str, set[date]], date | None]:
+) -> tuple[dict[str, set[date]], date | None, dict[str, dict[date, dict]]]:
     """Lee el Excel y se queda solo con fechas posteriores a `after` (hueco vs BD)."""
     by_dni: dict[str, set[date]] = {}
+    shifts: dict[str, dict[date, dict]] = {}
     max_date: date | None = None
     xl = pd.ExcelFile(BytesIO(content))
     for sheet in xl.sheet_names:
@@ -309,6 +359,8 @@ def parse_attendance_excel(
         cols = list(df.columns)
         dni_col = _pick_col(cols, ("documento", "dni", "id", "codigo", "código"))
         fecha_col = _pick_col(cols, ("fecha", "fecha marcacion", "fecha marcación", "dia", "día"))
+        hora_col = _pick_col(cols, ("tiempo", "hora", "hora marcacion", "hora marcación"))
+        disp_col = _pick_col(cols, ("nombre del dispositivo", "dispositivo", "device"))
         if not dni_col or not fecha_col:
             continue
         dnis = df[dni_col].map(_to_dni)
@@ -319,14 +371,28 @@ def parse_attendance_excel(
             mask &= fechas.dt.normalize() > cutoff
         if not mask.any():
             continue
-        for dni, ts in zip(dnis[mask].tolist(), fechas[mask].tolist()):
+        hora_vals = (
+            [_to_clock(v) for v in df.loc[mask, hora_col].tolist()]
+            if hora_col
+            else [None] * int(mask.sum())
+        )
+        disp_vals = (
+            [str(v).strip() if v is not None and str(v) != "nan" else "" for v in df.loc[mask, disp_col].tolist()]
+            if disp_col
+            else [""] * int(mask.sum())
+        )
+        for dni, ts, hm, disp in zip(dnis[mask].tolist(), fechas[mask].tolist(), hora_vals, disp_vals):
             fecha = ts.date() if hasattr(ts, "date") else _to_date(ts)
             if not dni or not fecha:
                 continue
             by_dni.setdefault(str(dni), set()).add(fecha)
+            clock = hm
+            if clock is None and hasattr(ts, "hour") and (int(ts.hour) or int(ts.minute) or int(ts.second)):
+                clock = ts.to_pydatetime().time() if hasattr(ts, "to_pydatetime") else None
+            _acc_shift(shifts, str(dni), fecha, clock, disp)
             if max_date is None or fecha > max_date:
                 max_date = fecha
-    return by_dni, max_date
+    return by_dni, max_date, shifts
 
 
 def _snapshot() -> dict:
@@ -334,19 +400,23 @@ def _snapshot() -> dict:
         return {
             "ok": bool(_cache.get("ok")),
             "by_dni": _cache.get("by_dni") or {},
+            "by_dni_shifts": _cache.get("by_dni_shifts") or {},
             "max_date": _cache.get("max_date"),
             "loaded_day": _cache.get("loaded_day"),
             "error": _cache.get("error"),
         }
 
 
-def _store_cache(by_dni: dict, max_date: date | None, error: str | None = None) -> None:
+def _store_cache(
+    by_dni: dict, max_date: date | None, error: str | None = None, shifts: dict | None = None
+) -> None:
     with _LOCK:
         _cache.update(
             {
                 "loaded_at": time.time(),
                 "loaded_day": _lima_today(),
                 "by_dni": by_dni,
+                "by_dni_shifts": shifts or {},
                 "max_date": max_date,
                 "ok": True,
                 "error": error,
@@ -364,6 +434,7 @@ def _refresh_worker() -> None:
                     {
                         "ok": False,
                         "by_dni": {},
+                        "by_dni_shifts": {},
                         "max_date": None,
                         "error": "sin caché MSAL",
                     }
@@ -372,21 +443,25 @@ def _refresh_worker() -> None:
         from .attendance_db import attendance_configured, fetch_coverage_max_date
 
         after = fetch_coverage_max_date() if attendance_configured() else None
-        today = _lima_today()
-        if after is not None and after >= today:
-            _store_cache({}, after)
-            logger.info("BD de asistencia al día (%s); no se descarga el Excel.", after)
-            return
         raw = download_excel_bytes(interactive=False)
-        by_dni, max_date = parse_attendance_excel(raw, after=after)
+        by_dni_all, max_date, shifts = parse_attendance_excel(raw)
+        if after is not None:
+            by_dni = {
+                dni: {d for d in days if d > after}
+                for dni, days in by_dni_all.items()
+            }
+            by_dni = {dni: days for dni, days in by_dni.items() if days}
+        else:
+            by_dni = by_dni_all
         if max_date is None and after is not None:
             max_date = after
-        _store_cache(by_dni, max_date)
+        _store_cache(by_dni, max_date, shifts=shifts)
         logger.info(
-            "Excel asistencia: hueco desde %s → %s DNIs, última fecha %s (1 vez/día Lima).",
-            after.isoformat() if after else "el inicio",
-            len(by_dni),
+            "Excel asistencia: %s DNIs, %s días con turno, última fecha %s (hueco calendario desde %s).",
+            len(by_dni_all),
+            sum(len(v) for v in shifts.values()),
             max_date,
+            after.isoformat() if after else "el inicio",
         )
     except Exception as exc:
         logger.exception("Excel asistencia SharePoint: %s", exc)
@@ -395,7 +470,7 @@ def _refresh_worker() -> None:
             _cache["error"] = str(exc)
             _cache["fail_until"] = time.time() + _FAIL_BACKOFF_SEC
             if not _cache.get("ok"):
-                _cache.update({"by_dni": {}, "max_date": None})
+                _cache.update({"by_dni": {}, "by_dni_shifts": {}, "max_date": None})
     finally:
         with _LOCK:
             _refreshing = False
@@ -429,6 +504,23 @@ def fetch_excel_attendance_dates(dni: str, year: int) -> set[date]:
         return set()
     days = snap["by_dni"].get(str(dni).strip(), set())
     return {d for d in days if d.year == year}
+
+
+def fetch_excel_shifts(dnis: list[str], start: date, end: date) -> dict[str, dict[date, dict]]:
+    snap = _snapshot()
+    if not snap.get("ok") or snap.get("loaded_day") != _lima_today() or not snap.get("by_dni_shifts"):
+        schedule_excel_refresh()
+    if not snap.get("ok") or start > end:
+        return {}
+    wanted = {str(x).strip() for x in dnis}
+    out: dict[str, dict[date, dict]] = {}
+    for dni, days in (snap.get("by_dni_shifts") or {}).items():
+        if dni not in wanted:
+            continue
+        for fecha, row in days.items():
+            if start <= fecha <= end:
+                out.setdefault(dni, {})[fecha] = row
+    return out
 
 
 def excel_coverage_max_date(year: int | None = None) -> date | None:

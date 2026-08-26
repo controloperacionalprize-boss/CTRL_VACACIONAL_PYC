@@ -19,6 +19,7 @@ from app.db import get_conn
 from app.domain.calendar import iso_monday, now_lima
 from app.domain.excel_norm import (
     is_user_active,
+    is_worker_vigente,
     normalize_cronograma,
     normalize_users,
     normalize_vacation_records,
@@ -145,6 +146,10 @@ def build_sql(workers, cronograma, records, users) -> str:
         fi = w["FECHA_INGRESO"]
         if pd.isna(fi):
             fi = None
+        fc = w.get("FECHA_CESE")
+        if fc is None or pd.isna(fc):
+            fc = None
+        vigencia = str(w.get("VIGENCIA") or "").strip()
         emp_rows.append(
             (
                 str(w["DNI"]),
@@ -157,14 +162,17 @@ def build_sql(workers, cronograma, records, users) -> str:
                 w["CARGO_ACTUAL"],
                 fi,
                 w["TIPO_PERSONAL"],
+                vigencia,
+                fc,
+                is_worker_vigente(vigencia) and (fc is None or fc >= date.today()),
             )
         )
     batch_insert(
         lines,
         "employees",
-        "dni, nombre, empresa, division, gerencia, area, jefatura, cargo_actual, fecha_ingreso, tipo_personal",
+        "dni, nombre, empresa, division, gerencia, area, jefatura, cargo_actual, fecha_ingreso, tipo_personal, vigencia, fecha_cese, activo",
         emp_rows,
-        "ON CONFLICT (dni) DO UPDATE SET nombre=EXCLUDED.nombre, empresa=EXCLUDED.empresa, division=EXCLUDED.division, gerencia=EXCLUDED.gerencia, area=EXCLUDED.area, jefatura=EXCLUDED.jefatura, cargo_actual=EXCLUDED.cargo_actual, fecha_ingreso=EXCLUDED.fecha_ingreso, tipo_personal=EXCLUDED.tipo_personal",
+        "ON CONFLICT (dni) DO UPDATE SET nombre=EXCLUDED.nombre, empresa=EXCLUDED.empresa, division=EXCLUDED.division, gerencia=EXCLUDED.gerencia, area=EXCLUDED.area, jefatura=EXCLUDED.jefatura, cargo_actual=EXCLUDED.cargo_actual, fecha_ingreso=EXCLUDED.fecha_ingreso, tipo_personal=EXCLUDED.tipo_personal, vigencia=EXCLUDED.vigencia, fecha_cese=EXCLUDED.fecha_cese, activo=EXCLUDED.activo",
     )
 
     crono_map: dict[tuple, tuple] = {}

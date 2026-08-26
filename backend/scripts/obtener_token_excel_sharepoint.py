@@ -83,7 +83,7 @@ def main() -> int:
 
     get_settings.cache_clear()
     raw = download_excel_bytes(interactive=False)
-    by_dni, max_date = parse_attendance_excel(raw)
+    by_dni, max_date, _shifts = parse_attendance_excel(raw)
     print(f"OK: {len(by_dni)} DNIs, ultima fecha {max_date}.")
     return 0
 

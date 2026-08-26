@@ -39,6 +39,15 @@ def normalize_workers(df: pd.DataFrame) -> pd.DataFrame:
         "FECHA_ING": "FECHA_INGRESO",
         "CARGO": "CARGO_ACTUAL",
         "CARGO_ACTUAL_": "CARGO_ACTUAL",
+        "ESTADO": "VIGENCIA",
+        "ESTADO_VIGENCIA": "VIGENCIA",
+        "SITUACION": "VIGENCIA",
+        "F_CESE": "FECHA_CESE",
+        "FECHA_DE_CESE": "FECHA_CESE",
+        "FECHA_RETIRO": "FECHA_CESE",
+        "F_RETIRO": "FECHA_CESE",
+        "FECHA_BAJA": "FECHA_CESE",
+        "F_BAJA": "FECHA_CESE",
     }
     for old, new in aliases.items():
         if old in df.columns and new not in df.columns:
@@ -84,7 +93,14 @@ def normalize_workers(df: pd.DataFrame) -> pd.DataFrame:
         {"OPERARIO": "OPERATIVO", "OBRERO": "OPERATIVO", "CAMPO": "OPERATIVO"}
     )
     df["FECHA_INGRESO"] = parse_date_column(df["FECHA_INGRESO"]).dt.date
-    return df[text_cols + ["FECHA_INGRESO"]].drop_duplicates(subset=["DNI"]).reset_index(drop=True)
+    if "VIGENCIA" not in df.columns:
+        df["VIGENCIA"] = ""
+    df["VIGENCIA"] = df["VIGENCIA"].fillna("").astype(str).str.strip()
+    if "FECHA_CESE" not in df.columns:
+        df["FECHA_CESE"] = pd.NaT
+    else:
+        df["FECHA_CESE"] = parse_date_column(df["FECHA_CESE"]).dt.date
+    return df[text_cols + ["FECHA_INGRESO", "VIGENCIA", "FECHA_CESE"]].drop_duplicates(subset=["DNI"]).reset_index(drop=True)
 
 
 def normalize_cronograma(df: pd.DataFrame | None) -> pd.DataFrame:
@@ -233,6 +249,36 @@ def is_user_active(activo: str | bool) -> bool:
     if isinstance(activo, bool):
         return activo
     return str(activo).upper() in {"SI", "SÍ", "1", "TRUE", "ACTIVO", "T"}
+
+
+_NO_VIGENTE = {
+    "NO",
+    "N",
+    "0",
+    "FALSE",
+    "CESADO",
+    "CESADA",
+    "INACTIVO",
+    "BAJA",
+    "RETIRADO",
+    "RETIRADA",
+    "NO VIGENTE",
+    "NO_VIGENTE",
+    "F",
+}
+
+
+def is_worker_vigente(value) -> bool:
+    if value is None or value is True:
+        return True
+    if value is False:
+        return False
+    text = str(value).strip().upper()
+    if text == "" or text in {"NAN", "NONE", "NAT"}:
+        return True
+    if text in _NO_VIGENTE or text.startswith("CESAD") or text.startswith("INACTIV") or text.startswith("RETIR"):
+        return False
+    return True
 
 
 def read_master_and_cronograma(path) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
