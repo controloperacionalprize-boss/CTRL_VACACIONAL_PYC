@@ -1,6 +1,7 @@
 from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import Response
 from pydantic import BaseModel, field_validator
 
 from ..auth import get_current_user
@@ -13,6 +14,7 @@ from ..domain.calendar import (
     clear_dates_for_week,
     count_year_days,
     date_is_past,
+    dates_for_dni_year,
     derecho_vigente,
     ensure_within_derecho,
     is_business_day,
@@ -30,14 +32,77 @@ from ..domain.calendar import (
     week_dates,
     week_is_locked,
 )
+from ..domain.documents import (
+    TITULOS,
+    build_context,
+    documento_meta,
+    filename_for,
+    fill_template,
+    reconstruct_old_periods,
+)
 from ..domain.plan import log_change, persist_employee, validate_plan
 from ..services import get_employee, list_employees, load_scope_plan
 
 router = APIRouter(prefix="/api/plan", tags=["plan"])
 
+_NOT_IN_SCOPE = "Esa persona no aparece con el filtro actual."
+
 
 def _http_value_error(exc: ValueError) -> HTTPException:
     return HTTPException(400, str(exc))
+
+
+def _load_employee_plan(cur, user: dict, dni: str, year: int):
+    emp = get_employee(cur, user, dni)
+    if not emp:
+        raise HTTPException(404, _NOT_IN_SCOPE)
+    daily_set, targets = load_scope_plan(cur, year, [emp])
+    return emp, daily_set, targets
+
+
+def _persist_and_log(cur, year: int, emp: dict, daily_set, targets, user: dict, deltas: list) -> None:
+    persist_employee(cur, year, emp, daily_set, targets, user["correo"])
+    _log_week_deltas(cur, emp, year, deltas, user)
+
+
+def _reject_if_no_saldo(
+    emp: dict,
+    *,
+    pedidas: int,
+    programados_base: int,
+    derecho: int,
+    es_adelanto: bool,
+) -> None:
+    reject_if_exceeds_saldo(
+        nombre=emp["nombre"],
+        pedidas=pedidas,
+        programados_base=programados_base,
+        derecho=derecho,
+        es_adelanto=es_adelanto,
+    )
+
+
+def _ensure_saldo(
+    emp: dict,
+    *,
+    pedidas: int,
+    programados_base: int,
+    daily_set,
+    dni: str,
+    year: int,
+    derecho: int,
+    es_adelanto: bool,
+) -> None:
+    ensure_within_derecho(
+        daily_set,
+        dni,
+        year,
+        nombre=emp["nombre"],
+        pedidas=pedidas,
+        programados_base=programados_base,
+        derecho=derecho,
+        es_adelanto=es_adelanto,
+    )
 
 
 def _derecho_for_emp(emp: dict, today: date) -> tuple[int, bool]:
@@ -197,10 +262,7 @@ def week_detail(
 ):
     with get_conn(write=False) as conn:
         cur = conn.cursor()
-        emp = get_employee(cur, user, dni)
-        if not emp:
-            raise HTTPException(404, "Esa persona no aparece con el filtro actual.")
-        daily_set, targets = load_scope_plan(cur, year, [emp])
+        emp, daily_set, targets = _load_employee_plan(cur, user, dni, year)
     dates = week_dates(year, week)
     today = today_lima()
     selected = [d.isoformat() for d in dates if key_daily(dni, d) in daily_set]
@@ -229,11 +291,8 @@ def patch_week(body: WeekPatch, user: dict = Depends(get_current_user)):
         raise HTTPException(400, "Esa semana ya pasó y no se puede cambiar.")
     with get_conn() as conn:
         cur = conn.cursor()
-        emp = get_employee(cur, user, body.dni)
-        if not emp:
-            raise HTTPException(404, "Esa persona no aparece con el filtro actual.")
-        daily_set, targets = load_scope_plan(cur, body.year, [emp])
-        old = int(targets.get((body.dni, body.week), 0))
+        emp, daily_set, targets = _load_employee_plan(cur, user, body.dni, body.year)
+        nuevas: list = []
         if body.days == 0:
             clear_dates_for_week(
                 daily_set, body.dni, body.year, body.week, keep_past=True
@@ -260,14 +319,14 @@ def patch_week(body: WeekPatch, user: dict = Depends(get_current_user)):
             programados_base = programados - liberados
             derecho, es_adelanto = _derecho_for_emp(emp, today_lima())
             try:
-                reject_if_exceeds_saldo(
-                    nombre=emp["nombre"],
+                _reject_if_no_saldo(
+                    emp,
                     pedidas=body.days,
                     programados_base=programados_base,
                     derecho=derecho,
                     es_adelanto=es_adelanto,
                 )
-                _, deltas = apply_consecutive_span(
+                nuevas, deltas = apply_consecutive_span(
                     daily_set,
                     targets,
                     body.dni,
@@ -277,22 +336,38 @@ def patch_week(body: WeekPatch, user: dict = Depends(get_current_user)):
                     body.year,
                     clear_week=body.week,
                 )
-                ensure_within_derecho(
-                    daily_set,
-                    body.dni,
-                    body.year,
-                    nombre=emp["nombre"],
+                _ensure_saldo(
+                    emp,
                     pedidas=body.days,
                     programados_base=programados_base,
+                    daily_set=daily_set,
+                    dni=body.dni,
+                    year=body.year,
                     derecho=derecho,
                     es_adelanto=es_adelanto,
                 )
             except ValueError as exc:
                 raise _http_value_error(exc) from exc
-        persist_employee(cur, body.year, emp, daily_set, targets, user["correo"])
-        _log_week_deltas(cur, emp, body.year, deltas, user)
+        _persist_and_log(cur, body.year, emp, daily_set, targets, user, deltas)
+        periods = vacation_periods(daily_set, body.dni, body.year, today_lima())
+        _, es_adelanto = _derecho_for_emp(emp, today_lima())
+        meta = (
+            documento_meta(
+                es_adelanto=es_adelanto,
+                moved=False,
+                period_sizes=[p["dias"] for p in periods],
+            )
+            if body.days
+            else None
+        )
     weeks = {str(wk): new for wk, _old, new in deltas}
-    return {"ok": True, "weeks": weeks, "selected": weeks.get(str(body.week), 0)}
+    out = {"ok": True, "weeks": weeks, "selected": weeks.get(str(body.week), 0)}
+    if meta:
+        out["documento"] = meta
+        if nuevas:
+            out["fechas"] = [d.isoformat() for d in nuevas]
+            out["fin"] = nuevas[-1].isoformat()
+    return out
 
 
 @router.patch("/daily")
@@ -301,10 +376,7 @@ def patch_daily(body: DailyPatch, user: dict = Depends(get_current_user)):
         raise HTTPException(400, "Esa semana ya pasó y no se puede cambiar.")
     with get_conn() as conn:
         cur = conn.cursor()
-        emp = get_employee(cur, user, body.dni)
-        if not emp:
-            raise HTTPException(404, "Esa persona no aparece con el filtro actual.")
-        daily_set, targets = load_scope_plan(cur, body.year, [emp])
+        emp, daily_set, targets = _load_employee_plan(cur, user, body.dni, body.year)
         allowed = set(week_dates(body.year, body.week))
         modo = allowed_type(emp["tipo_personal"], body.dni)
         today = today_lima()
@@ -331,20 +403,20 @@ def patch_daily(body: DailyPatch, user: dict = Depends(get_current_user)):
         programados_base = programados - n
         derecho, es_adelanto = _derecho_for_emp(emp, today)
         try:
-            reject_if_exceeds_saldo(
-                nombre=emp["nombre"],
+            _reject_if_no_saldo(
+                emp,
                 pedidas=n,
                 programados_base=programados,
                 derecho=derecho,
                 es_adelanto=es_adelanto,
             )
-            ensure_within_derecho(
-                daily_set,
-                body.dni,
-                body.year,
-                nombre=emp["nombre"],
+            _ensure_saldo(
+                emp,
                 pedidas=n,
                 programados_base=programados,
+                daily_set=daily_set,
+                dni=body.dni,
+                year=body.year,
                 derecho=derecho,
                 es_adelanto=es_adelanto,
             )
@@ -366,15 +438,12 @@ def patch_daily(body: DailyPatch, user: dict = Depends(get_current_user)):
 def consecutive(body: ConsecutiveIn, user: dict = Depends(get_current_user)):
     with get_conn() as conn:
         cur = conn.cursor()
-        emp = get_employee(cur, user, body.dni)
-        if not emp:
-            raise HTTPException(404, "Esa persona no aparece con el filtro actual.")
-        daily_set, targets = load_scope_plan(cur, body.year, [emp])
+        emp, daily_set, targets = _load_employee_plan(cur, user, body.dni, body.year)
         programados = count_year_days(daily_set, body.dni, body.year)
         derecho, es_adelanto = _derecho_for_emp(emp, today_lima())
         try:
-            reject_if_exceeds_saldo(
-                nombre=emp["nombre"],
+            _reject_if_no_saldo(
+                emp,
                 pedidas=body.days,
                 programados_base=programados,
                 derecho=derecho,
@@ -389,25 +458,30 @@ def consecutive(body: ConsecutiveIn, user: dict = Depends(get_current_user)):
                 body.days,
                 body.year,
             )
-            ensure_within_derecho(
-                daily_set,
-                body.dni,
-                body.year,
-                nombre=emp["nombre"],
+            _ensure_saldo(
+                emp,
                 pedidas=body.days,
                 programados_base=programados,
+                daily_set=daily_set,
+                dni=body.dni,
+                year=body.year,
                 derecho=derecho,
                 es_adelanto=es_adelanto,
             )
         except ValueError as exc:
             raise _http_value_error(exc) from exc
-        persist_employee(cur, body.year, emp, daily_set, targets, user["correo"])
-        _log_week_deltas(cur, emp, body.year, deltas, user)
+        _persist_and_log(cur, body.year, emp, daily_set, targets, user, deltas)
+        periods = vacation_periods(daily_set, body.dni, body.year, today_lima())
     return {
         "ok": True,
         "fechas": [d.isoformat() for d in nuevas],
         "weeks": {str(wk): new for wk, _old, new in deltas},
         "fin": nuevas[-1].isoformat() if nuevas else None,
+        "documento": documento_meta(
+            es_adelanto=es_adelanto,
+            moved=False,
+            period_sizes=[p["dias"] for p in periods],
+        ),
     }
 
 
@@ -423,10 +497,7 @@ class PeriodMoveIn(BaseModel):
 def get_periods(year: int, dni: str, user: dict = Depends(get_current_user)):
     with get_conn(write=False) as conn:
         cur = conn.cursor()
-        emp = get_employee(cur, user, dni)
-        if not emp:
-            raise HTTPException(404, "Esa persona no aparece con el filtro actual.")
-        daily_set, _targets = load_scope_plan(cur, year, [emp])
+        _emp, daily_set, _targets = _load_employee_plan(cur, user, dni, year)
     today = today_lima()
     periods = vacation_periods(daily_set, dni, year, today)
     return {
@@ -450,10 +521,7 @@ def get_periods(year: int, dni: str, user: dict = Depends(get_current_user)):
 def period_move(body: PeriodMoveIn, user: dict = Depends(get_current_user)):
     with get_conn() as conn:
         cur = conn.cursor()
-        emp = get_employee(cur, user, body.dni)
-        if not emp:
-            raise HTTPException(404, "Esa persona no aparece con el filtro actual.")
-        daily_set, targets = load_scope_plan(cur, body.year, [emp])
+        emp, daily_set, targets = _load_employee_plan(cur, user, body.dni, body.year)
         today = today_lima()
         periods = vacation_periods(daily_set, body.dni, body.year, today)
         found = next((p for p in periods if p["inicio"] == body.old_start), None)
@@ -464,8 +532,8 @@ def period_move(body: PeriodMoveIn, user: dict = Depends(get_current_user)):
         programados_base = programados - int(found["dias"])
         derecho, es_adelanto = _derecho_for_emp(emp, today)
         try:
-            reject_if_exceeds_saldo(
-                nombre=emp["nombre"],
+            _reject_if_no_saldo(
+                emp,
                 pedidas=n,
                 programados_base=programados_base,
                 derecho=derecho,
@@ -482,27 +550,86 @@ def period_move(body: PeriodMoveIn, user: dict = Depends(get_current_user)):
                 n,
                 today=today,
             )
-            ensure_within_derecho(
-                daily_set,
-                body.dni,
-                body.year,
-                nombre=emp["nombre"],
+            _ensure_saldo(
+                emp,
                 pedidas=n,
                 programados_base=programados_base,
+                daily_set=daily_set,
+                dni=body.dni,
+                year=body.year,
                 derecho=derecho,
                 es_adelanto=es_adelanto,
             )
         except ValueError as exc:
             raise _http_value_error(exc) from exc
-        persist_employee(cur, body.year, emp, daily_set, targets, user["correo"])
-        _log_week_deltas(cur, emp, body.year, deltas, user)
+        _persist_and_log(cur, body.year, emp, daily_set, targets, user, deltas)
     return {
         "ok": True,
         "fechas": [d.isoformat() for d in nuevas],
         "fin": nuevas[-1].isoformat() if nuevas else None,
         "weeks": {str(wk): new for wk, _old, new in deltas},
         "dias": n,
+        "documento": {"escenario": 3, "titulo": TITULOS[3]},
     }
+
+
+class DocumentoIn(BaseModel):
+    year: int
+    dni: str
+    escenario: int
+    start_date: date
+    days: int
+    fin: date | None = None
+    old_start: date | None = None
+
+    @field_validator("escenario")
+    @classmethod
+    def escenario_ok(cls, v: int) -> int:
+        if v not in TITULOS:
+            raise ValueError("Escenario de documento no válido.")
+        return v
+
+
+@router.post("/documento")
+def generar_documento(body: DocumentoIn, user: dict = Depends(get_current_user)):
+    today = today_lima()
+    with get_conn(write=False) as conn:
+        cur = conn.cursor()
+        emp, daily_set, _targets = _load_employee_plan(cur, user, body.dni, body.year)
+        periods = vacation_periods(daily_set, body.dni, body.year, today)
+        programmed = dates_for_dni_year(daily_set, body.dni, body.year)
+    matched = next((p for p in periods if p["inicio"] == body.start_date), None)
+    inicio = body.start_date
+    fin = body.fin or (matched["fin"] if matched else None)
+    if fin is None:
+        raise HTTPException(400, "No se encontró el tramo programado para armar el documento.")
+    dias = body.days
+    anteriores = (
+        reconstruct_old_periods(periods, body.old_start, inicio)
+        if body.old_start
+        else []
+    )
+    ctx = build_context(
+        emp,
+        today=today,
+        year=body.year,
+        inicio=inicio,
+        fin=fin,
+        dias=dias,
+        periodos=periods,
+        periodos_anteriores=anteriores,
+        programmed=programmed,
+    )
+    try:
+        data = fill_template(body.escenario, ctx)
+    except FileNotFoundError as exc:
+        raise HTTPException(500, "No está la plantilla Word en el servidor.") from exc
+    name = filename_for(body.escenario, ctx)
+    return Response(
+        content=data,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f'attachment; filename="{name}"'},
+    )
 
 
 @router.get("/validate")

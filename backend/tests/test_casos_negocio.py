@@ -1,11 +1,7 @@
 """Mapa de casos GTH: goce 30, Art. 8, adelanto, modificar período, fechas, año."""
 from datetime import date, timedelta
-import sys
-from pathlib import Path
 
 import pytest
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.domain.calendar import (
     apply_consecutive_span,

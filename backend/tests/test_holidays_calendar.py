@@ -1,8 +1,4 @@
 from datetime import date
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.domain.employee_calendar import employee_calendar_payload
 from app.domain.holidays_pe import peru_holidays
@@ -66,7 +62,7 @@ def test_sin_marcacion_solo_desde_fecha_ingreso():
         assert "2026-04-21" in payload["sin_marcacion"]
 
 
-def test_jefe_no_pinta_falta_ni_asistencia():
+def test_jefe_pinta_asistencia_sin_faltas():
     worker = {
         "dni": "1",
         "nombre": "Boss",
@@ -80,16 +76,19 @@ def test_jefe_no_pinta_falta_ni_asistencia():
         worker,
         2026,
         [date(2026, 8, 21)],
-        asistencia={date(2026, 8, 20)},
+        asistencia=set(),  # no marcan biométrico
         attendance_ok=True,
+        coverage_until=date(2026, 8, 25),
     )
     assert payload["exento_marcacion"] is True
-    assert payload["asistencia"] == []
-    assert "2026-08-19" not in payload["sin_marcacion"]
+    assert "2026-08-19" in payload["asistencia"]  # laborable → verde
+    assert "2026-08-20" in payload["asistencia"]
+    assert "2026-08-21" not in payload["asistencia"]  # vacaciones
+    assert "2026-08-19" not in payload["sin_marcacion"]  # sin rojo
     assert "2026-08-21" in payload["fechas"]
 
 
-def test_gerente_no_pinta_falta_ni_asistencia():
+def test_gerente_pinta_asistencia_sin_faltas():
     worker = {
         "dni": "2",
         "nombre": "Gerente",
@@ -100,14 +99,19 @@ def test_gerente_no_pinta_falta_ni_asistencia():
         "gerencia": "G",
     }
     payload = employee_calendar_payload(
-        worker, 2026, [], asistencia={date(2026, 8, 20)}, attendance_ok=True
+        worker,
+        2026,
+        [],
+        asistencia=set(),
+        attendance_ok=True,
+        coverage_until=date(2026, 8, 25),
     )
     assert payload["exento_marcacion"] is True
-    assert payload["asistencia"] == []
+    assert "2026-08-19" in payload["asistencia"]
     assert "2026-08-19" not in payload["sin_marcacion"]
 
 
-def test_sub_gerente_no_pinta_falta_ni_asistencia():
+def test_sub_gerente_pinta_asistencia_sin_faltas():
     worker = {
         "dni": "3",
         "nombre": "Sub",
@@ -118,7 +122,13 @@ def test_sub_gerente_no_pinta_falta_ni_asistencia():
         "gerencia": "G",
     }
     payload = employee_calendar_payload(
-        worker, 2026, [], asistencia=set(), attendance_ok=True
+        worker,
+        2026,
+        [],
+        asistencia=set(),
+        attendance_ok=True,
+        coverage_until=date(2026, 8, 25),
     )
     assert payload["exento_marcacion"] is True
+    assert "2026-08-19" in payload["asistencia"]
     assert "2026-08-19" not in payload["sin_marcacion"]

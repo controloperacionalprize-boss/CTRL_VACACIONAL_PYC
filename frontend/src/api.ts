@@ -3,7 +3,7 @@ import { formatApiError } from "./lib/apiError";
 export const API = import.meta.env.VITE_API_URL || "";
 
 // Evita que la UI quede "colgada" para siempre si el backend no responde
-// (caída, red lenta, etc.). Las exportaciones a Excel necesitan más margen.
+// (caída, red lenta, etc.). Las exportaciones a Excel / Word necesitan más margen.
 const DEFAULT_TIMEOUT_MS = 20_000;
 const LONG_TIMEOUT_MS = 60_000;
 
@@ -12,10 +12,13 @@ export function authHeader(): HeadersInit {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
-export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const timeoutMs = path.includes("/export") ? LONG_TIMEOUT_MS : DEFAULT_TIMEOUT_MS;
+function timeoutFor(path: string) {
+  return path.includes("/export") || path.includes("/documento") ? LONG_TIMEOUT_MS : DEFAULT_TIMEOUT_MS;
+}
+
+async function request(path: string, init: RequestInit = {}): Promise<Response> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const timer = setTimeout(() => controller.abort(), timeoutFor(path));
 
   let res: Response;
   try {
@@ -63,9 +66,34 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
                 : "No se pudo completar la operación.";
     throw new Error(formatApiError(detail, statusHint));
   }
+  return res;
+}
+
+export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const res = await request(path, init);
   const ct = res.headers.get("content-type") || "";
   if (ct.includes("application/json")) return res.json();
   return res as unknown as T;
+}
+
+function filenameFromDisposition(header: string | null, fallback: string) {
+  if (!header) return fallback;
+  const quoted = header.match(/filename="([^"]+)"/);
+  if (quoted?.[1]) return quoted[1];
+  const star = header.match(/filename\*=UTF-8''([^;]+)/i);
+  if (star?.[1]) return decodeURIComponent(star[1]);
+  return fallback;
+}
+
+export async function downloadFile(path: string, init: RequestInit = {}, fallbackName = "descarga") {
+  const res = await request(path, init);
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filenameFromDisposition(res.headers.get("content-disposition"), fallbackName);
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 export function qs(params: Record<string, string | number | string[] | undefined>) {

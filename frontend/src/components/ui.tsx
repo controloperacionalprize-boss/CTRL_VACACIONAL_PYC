@@ -68,24 +68,51 @@ export function Kpi({
   value,
   hint,
   icon,
+  accent,
   className,
 }: {
   label: string;
   value: string | number;
   hint?: string;
   icon?: ReactNode;
+  accent?: "primary" | "success" | "warning" | "error" | "info";
   className?: string;
 }) {
+  const accentBar = {
+    primary: "border-t-primary",
+    success: "border-t-success",
+    warning: "border-t-warning",
+    error: "border-t-error",
+    info: "border-t-info",
+  } as const;
+  const iconTone = {
+    primary: "bg-[var(--primary-soft)] text-primary",
+    success: "bg-success-muted text-success",
+    warning: "bg-warning-muted text-warning",
+    error: "bg-error-muted text-error",
+    info: "bg-info-muted text-info",
+  } as const;
   return (
-    <div className={cn("rounded-xl border border-border bg-card p-3.5 shadow-[var(--shadow-card)] md:p-4", className)}>
+    <div
+      className={cn(
+        "rounded-xl border border-border bg-card p-3.5 shadow-[var(--shadow-card)] md:p-4",
+        accent ? cn("border-t-[3px]", accentBar[accent]) : null,
+        className
+      )}
+    >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="text-[11px] font-semibold tracking-wide text-muted-foreground">{label}</div>
+          <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</div>
           <div className="font-data mt-1.5 text-[24px] font-semibold leading-none text-foreground md:text-[28px]">{value}</div>
           {hint ? <div className="mt-1.5 hidden text-[11px] text-muted-foreground sm:block">{hint}</div> : null}
         </div>
         {icon ? (
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] bg-[var(--primary-soft)] text-primary md:h-9 md:w-9">
+          <div
+            className={cn(
+              "flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] md:h-9 md:w-9",
+              accent ? iconTone[accent] : "bg-[var(--primary-soft)] text-primary"
+            )}
+          >
             {icon}
           </div>
         ) : null}

@@ -1,87 +1,23 @@
-import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
-import { api, qs } from "../api";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { api, downloadFile, qs } from "../api";
+import { addDaysIso, formatDayLabel, formatFechaIso, localTodayIso } from "../lib/dates";
 import { SEM_COLORS, weekLocked } from "../lib/semaforo";
+import {
+  MAX_VAC_DAYS,
+  diasDisponibles,
+  esAdelanto,
+  etiquetaEstado,
+  msgSinSaldo,
+  topeDe,
+} from "../lib/vacaciones";
 import { useApp } from "../state";
 import { Alert, Button, cn, EmptyState, Field, Input, Kpi, PageHeader } from "../components/ui";
 import { EmpAvatar } from "../components/EmpAvatar";
-import { CalendarClock, CalendarDays, CalendarPlus, CalendarRange, Users, UserCheck, UserX } from "lucide-react";
+import { CalendarClock, CalendarDays, CalendarPlus, CalendarRange, FileDown, Users, UserCheck, UserX } from "lucide-react";
+import { WorkerCard, WorkerRow } from "./plan/WorkerGrid";
+import type { DocumentoMeta, DocReady, Plan, VacPeriod, WeekDay, Worker } from "./plan/types";
 
-/** Derecho anual (mismo tope que backend DERECHO_ANUAL). */
-const MAX_VAC_DAYS = 30;
 const DAY_SHORT = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
-
-type Worker = {
-  dni: string;
-  nombre: string;
-  empresa: string;
-  division: string;
-  gerencia: string;
-  area: string;
-  cargo_actual: string;
-  fecha_ingreso: string | null;
-  tipo_personal: string;
-  weeks: number[];
-  total_dias: number;
-  cambios: number;
-  foto_url?: string | null;
-  /** false = aún no cumple el año; solo puede pedir adelanto hasta tope_dias. */
-  record_cumplido?: boolean;
-  /** Tope real programable: 30 si ya cumplió el récord, o lo acumulado (adelanto) si no. */
-  tope_dias?: number;
-};
-
-/** Tope real de un trabajador: 30 si ya cumplió el récord, o lo acumulado (adelanto). */
-function topeDe(w: Pick<Worker, "tope_dias"> | null | undefined) {
-  return w?.tope_dias ?? MAX_VAC_DAYS;
-}
-
-function esAdelanto<T extends Pick<Worker, "record_cumplido">>(
-  w: T | null | undefined
-): w is T & { record_cumplido: false } {
-  return w != null && w.record_cumplido === false;
-}
-
-function formatFechaIso(iso: string | null | undefined) {
-  if (!iso) return "—";
-  const [y, m, d] = iso.split("-");
-  if (!y || !m || !d) return iso;
-  return `${d}/${m}/${y}`;
-}
-
-function addDaysIso(iso: string, extra: number) {
-  const d = new Date(`${iso}T00:00:00`);
-  d.setDate(d.getDate() + extra);
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-}
-
-function etiquetaEstado(estado: string) {
-  if (estado === "gozado") return "Gozado";
-  if (estado === "en_curso") return "En curso";
-  return "Programado";
-}
-
-type VacPeriod = {
-  inicio: string;
-  fin: string;
-  dias: number;
-  estado: string;
-  editable: boolean;
-};
-
-type Plan = {
-  year: number;
-  today?: string;
-  current_year: number;
-  current_week: number;
-  total_semanas: number;
-  workers: Worker[];
-  kpis: { trabajadores: number; programados: number; pendientes: number; dias: number };
-};
-
-type WeekDay = { fecha: string; weekday: number; selected: boolean; past?: boolean };
 
 function scope(filters: ReturnType<typeof useApp>["filters"]) {
   return {
@@ -109,228 +45,11 @@ function patchWorkerWeeks(workers: Worker[], dni: string, updates: Record<number
   });
 }
 
-function cellColor(val: number) {
-  if (!val) return "transparent";
-  return SEM_COLORS[Math.min(val, 7)] || SEM_COLORS[7];
-}
-
-function formatDayLabel(iso: string) {
-  const [, m, d] = iso.split("-");
-  return `${d}/${m}`;
-}
-
-/** Días que aún puede pedir: tope (30, o acumulado si es adelanto) − ya programados. */
-function diasDisponibles(programadosBase: number, tope: number = MAX_VAC_DAYS) {
-  return Math.max(0, tope - Math.max(0, programadosBase));
-}
-
-/** Alerta de saldo insuficiente (misma lógica/texto que el backend). */
-function msgSinSaldo(nombre: string, pedidas: number, programadosBase: number, tope: number = MAX_VAC_DAYS, adelanto = false) {
-  const quien = nombre.trim() || "Este trabajador";
-  const disponibles = diasDisponibles(programadosBase, tope);
-  const etiqueta = adelanto ? "acumulado para adelanto" : "derecho anual";
-  if (disponibles <= 0) {
-    const extra = adelanto ? " (aún no cumple el año)" : "";
-    return `No se puede programar ${pedidas} día(s) para ${quien}: ya tiene los ${tope} días de ${etiqueta} programados${extra}.`;
-  }
-  return `No se puede programar ${pedidas} día(s) para ${quien}: solo le quedan ${disponibles} día(s) disponible(s) (${etiqueta} ${tope}, ya programados ${programadosBase}).`;
-}
-
 function weeksFromApi(res: { weeks?: Record<string, number> }, fallbackWeek: number, fallbackDays: number) {
   if (!res.weeks) return { [fallbackWeek]: fallbackDays } as Record<number, number>;
   return Object.fromEntries(Object.entries(res.weeks).map(([k, v]) => [Number(k), v]));
 }
 
-/** YYYY-MM-DD local (calendario del navegador). */
-function localTodayIso() {
-  const d = new Date();
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-}
-
-/** Edición local; confirma solo con Enter o al salir de la celda. */
-const WeekInput = memo(function WeekInput({
-  value,
-  week,
-  worker,
-  onCommit,
-  className,
-}: {
-  value: number;
-  week: number;
-  worker: Worker;
-  onCommit: (w: Worker, week: number, days: number) => void;
-  className: string;
-}) {
-  const [draft, setDraft] = useState(String(value));
-  const committedRef = useRef(value);
-
-  useEffect(() => {
-    committedRef.current = value;
-    setDraft(String(value));
-  }, [value]);
-
-  function commit(raw: string) {
-    const prev = committedRef.current;
-    if (raw.trim() === "") {
-      setDraft(String(prev));
-      return;
-    }
-    const n = Number(raw);
-    if (!Number.isFinite(n)) {
-      setDraft(String(prev));
-      return;
-    }
-    const clamped = Math.max(0, Math.min(MAX_VAC_DAYS, Math.round(n)));
-    if (clamped !== prev) {
-      onCommit(worker, week, clamped);
-      // >7 no se pinta en la celda hasta guardar (derrame); mantener valor anterior a la vista.
-      if (clamped > 7) {
-        setDraft(String(prev));
-        return;
-      }
-    }
-    setDraft(String(clamped));
-  }
-
-  return (
-    <input
-      type="number"
-      min={0}
-      max={MAX_VAC_DAYS}
-      title={`0–${MAX_VAC_DAYS} días (más de 7 se reparte en semanas siguientes)`}
-      value={draft}
-      onChange={(e) => setDraft(e.target.value)}
-      onKeyDown={(e) => {
-        if (e.key !== "Enter") return;
-        e.preventDefault();
-        (e.target as HTMLInputElement).blur();
-      }}
-      onBlur={(e) => commit(e.target.value)}
-      className={className}
-      style={{ background: value ? cellColor(value) : "transparent" }}
-    />
-  );
-});
-
-const WorkerRow = memo(function WorkerRow({
-  w,
-  lockedWeeks,
-  onDays,
-}: {
-  w: Worker;
-  lockedWeeks: boolean[];
-  onDays: (w: Worker, week: number, days: number) => void;
-}) {
-  return (
-    <tr className="hover:bg-muted/60" style={{ contentVisibility: "auto", containIntrinsicSize: "auto 32px" }}>
-      <td className="sticky left-0 z-10 whitespace-nowrap border-b border-border bg-card px-2.5 py-1 font-semibold">
-        <span className="inline-flex max-w-[220px] items-center gap-2">
-          <EmpAvatar nombre={w.nombre} fotoUrl={w.foto_url} className="h-7 w-7 text-[9px]" />
-          <span className="truncate">{w.nombre}</span>
-        </span>
-      </td>
-      <td className="border-b border-border px-2.5 py-1 text-muted-foreground">{w.dni}</td>
-      <td className="border-b border-border px-2.5 py-1">{w.area}</td>
-      <td className="border-b border-border px-2.5 py-1">{w.tipo_personal}</td>
-      <td className="border-b border-border px-2.5 py-1 text-center">{w.total_dias}</td>
-      {w.weeks.map((val, idx) => {
-        const week = idx + 1;
-        const locked = lockedWeeks[idx];
-        const bg = val ? cellColor(val) : locked ? "var(--muted)" : "transparent";
-        if (locked) {
-          return (
-            <td
-              key={week}
-              className="h-8 w-9 border-b border-border p-0 text-center text-[11px] font-medium text-muted-foreground"
-              style={{ background: bg }}
-            >
-              {val || ""}
-            </td>
-          );
-        }
-        return (
-          <td key={week} className="border-b border-border p-0">
-            <WeekInput
-              value={val}
-              week={week}
-              worker={w}
-              onCommit={onDays}
-              className="h-8 w-9 bg-transparent text-center text-[11px] font-medium outline-none"
-            />
-          </td>
-        );
-      })}
-    </tr>
-  );
-});
-
-const WorkerCard = memo(function WorkerCard({
-  w,
-  weekWindow,
-  lockedWeeks,
-  onDays,
-}: {
-  w: Worker;
-  weekWindow: number[];
-  lockedWeeks: boolean[];
-  onDays: (w: Worker, week: number, days: number) => void;
-}) {
-  return (
-    <article className="rounded-xl border border-border bg-card p-3.5 shadow-[var(--shadow-card)]">
-      <div className="flex items-start justify-between gap-2">
-        <div className="flex min-w-0 items-center gap-2.5">
-          <EmpAvatar nombre={w.nombre} fotoUrl={w.foto_url} className="h-9 w-9 text-[11px]" />
-          <div className="min-w-0">
-            <p className="truncate text-[14px] font-semibold">{w.nombre}</p>
-            <p className="mt-0.5 text-[12px] text-muted-foreground">
-              {w.dni} · {w.area || w.tipo_personal}
-            </p>
-          </div>
-        </div>
-        <span
-          className={cn(
-            "shrink-0 rounded-lg px-2 py-1 text-[11px] font-semibold",
-            w.total_dias === 0 ? "bg-warning-muted text-warning" : "bg-[var(--primary-soft)] text-primary"
-          )}
-        >
-          {w.total_dias === 0 ? "Sin días" : `${w.total_dias} días`}
-        </span>
-      </div>
-      <div className="mt-3 grid grid-cols-6 gap-1.5">
-        {weekWindow.map((week) => {
-          const idx = week - 1;
-          const val = w.weeks[idx] || 0;
-          const locked = lockedWeeks[idx];
-          const bg = val ? cellColor(val) : locked ? "var(--muted)" : "transparent";
-          return (
-            <label key={week} className="flex flex-col items-center gap-0.5">
-              <span className="text-[9px] font-semibold text-muted-foreground">S{week}</span>
-              {locked ? (
-                <span
-                  className="flex h-9 w-full items-center justify-center rounded-md border border-border text-[11px] font-medium text-muted-foreground"
-                  style={{ background: bg }}
-                >
-                  {val || "—"}
-                </span>
-              ) : (
-                <WeekInput
-                  value={val}
-                  week={week}
-                  worker={w}
-                  onCommit={onDays}
-                  className="h-9 w-full rounded-md border border-border text-center text-[11px] font-medium outline-none"
-                />
-              )}
-            </label>
-          );
-        })}
-      </div>
-    </article>
-  );
-});
 
 export function PlanPage() {
   const { filters } = useApp();
@@ -370,6 +89,9 @@ export function PlanPage() {
   const [periodoSel, setPeriodoSel] = useState("");
   const [modStart, setModStart] = useState("");
   const [loadError, setLoadError] = useState("");
+  const [docReady, setDocReady] = useState<DocReady | null>(null);
+  const [docBusy, setDocBusy] = useState(false);
+  const [docError, setDocError] = useState("");
 
   const params = useMemo(() => scope(filters), [filters]);
 
@@ -512,7 +234,12 @@ export function PlanPage() {
         return msg;
       }
       try {
-        const res = await api<{ weeks?: Record<string, number> }>("/api/plan/week", {
+        const res = await api<{
+          weeks?: Record<string, number>;
+          documento?: DocumentoMeta;
+          fin?: string;
+          fechas?: string[];
+        }>("/api/plan/week", {
           method: "PATCH",
           body: JSON.stringify({
             ...params,
@@ -525,6 +252,20 @@ export function PlanPage() {
         const updates = weeksFromApi(res, week, days);
         applyLocalWeeks(w.dni, updates);
         const spill = Object.keys(updates).filter((k) => Number(k) !== week);
+        if (res.documento && days > 0 && startDate) {
+          const fin = res.fin || (res.fechas && res.fechas[res.fechas.length - 1]) || "";
+          setDocError("");
+          setDocReady({
+            ...res.documento,
+            dni: w.dni,
+            year: params.year,
+            start_date: startDate,
+            days,
+            fin: fin || undefined,
+          });
+        } else if (days === 0) {
+          setDocReady(null);
+        }
         setOk(
           days === 0
             ? "Listo: se quitaron las vacaciones de esa semana."
@@ -669,17 +410,33 @@ export function PlanPage() {
     }
     setConsecSaving(true);
     try {
-      const res = await api<{ fechas?: string[]; fin?: string }>("/api/plan/consecutive", {
-        method: "POST",
-        body: JSON.stringify({
-          ...params,
-          dni: consec.dni,
-          start_date: consec.start,
-          days: consec.days,
-        }),
-      });
+      const res = await api<{ fechas?: string[]; fin?: string; documento?: DocumentoMeta }>(
+        "/api/plan/consecutive",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            ...params,
+            dni: consec.dni,
+            start_date: consec.start,
+            days: consec.days,
+          }),
+        }
+      );
       await load();
       const fin = res.fin || (res.fechas && res.fechas[res.fechas.length - 1]) || "";
+      setDocError("");
+      setDocReady(
+        res.documento
+          ? {
+              ...res.documento,
+              dni: consec.dni,
+              year: params.year,
+              start_date: consec.start,
+              days: consec.days,
+              fin: fin || undefined,
+            }
+          : null
+      );
       setOk(
         fin
           ? `Listo: se programaron ${consec.days} día(s) del ${formatFechaIso(consec.start)} al ${formatFechaIso(fin)}.`
@@ -729,17 +486,34 @@ export function PlanPage() {
     }
     setConsecSaving(true);
     try {
-      await api("/api/plan/consecutive", {
-        method: "POST",
-        body: JSON.stringify({
-          ...params,
-          dni: consec.dni,
-          start_date: consec.start,
-          days: consec.days,
-        }),
-      });
+      const res = await api<{ fin?: string; fechas?: string[]; documento?: DocumentoMeta }>(
+        "/api/plan/consecutive",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            ...params,
+            dni: consec.dni,
+            start_date: consec.start,
+            days: consec.days,
+          }),
+        }
+      );
       await load();
       setAdelantoOpen(false);
+      const fin = res.fin || (res.fechas && res.fechas[res.fechas.length - 1]) || "";
+      setDocError("");
+      setDocReady(
+        res.documento
+          ? {
+              ...res.documento,
+              dni: consec.dni,
+              year: params.year,
+              start_date: consec.start,
+              days: consec.days,
+              fin: fin || undefined,
+            }
+          : null
+      );
       setOk(
         `Listo: se adelantaron ${consec.days} día(s) para ${worker.nombre} desde el ${consec.start} (tope acumulado ${tope}).`
       );
@@ -781,7 +555,7 @@ export function PlanPage() {
     }
     setConsecSaving(true);
     try {
-      const res = await api<{ fin?: string }>("/api/plan/period-move", {
+      const res = await api<{ fin?: string; documento?: DocumentoMeta }>("/api/plan/period-move", {
         method: "POST",
         body: JSON.stringify({
           year: params.year,
@@ -793,6 +567,20 @@ export function PlanPage() {
       });
       await load();
       setModificarOpen(false);
+      setDocError("");
+      setDocReady(
+        res.documento
+          ? {
+              ...res.documento,
+              dni: consec.dni,
+              year: params.year,
+              start_date: modStart,
+              days: periodo.dias,
+              fin: res.fin,
+              old_start: periodoSel,
+            }
+          : null
+      );
       setOk(
         `Listo: el período de ${periodo.dias} día(s) pasó del ${formatFechaIso(periodo.inicio)} al ${formatFechaIso(modStart)}` +
           (res.fin ? ` (termina ${formatFechaIso(res.fin)})` : "") +
@@ -803,6 +591,34 @@ export function PlanPage() {
       setModificarError(e instanceof Error ? e.message : "No se pudo modificar el período.");
     } finally {
       setConsecSaving(false);
+    }
+  }
+
+  async function descargarDocumento() {
+    if (!docReady) return;
+    setDocBusy(true);
+    setDocError("");
+    try {
+      await downloadFile(
+        "/api/plan/documento",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            year: docReady.year,
+            dni: docReady.dni,
+            escenario: docReady.escenario,
+            start_date: docReady.start_date,
+            days: docReady.days,
+            fin: docReady.fin,
+            old_start: docReady.old_start,
+          }),
+        },
+        "vacaciones.docx"
+      );
+    } catch (e) {
+      setDocError(e instanceof Error ? e.message : "No se pudo descargar el documento.");
+    } finally {
+      setDocBusy(false);
     }
   }
 
@@ -837,7 +653,24 @@ export function PlanPage() {
       ) : null}
       {ok ? (
         <Alert tone="success" title="Guardado">
-          {ok}
+          <p>{ok}</p>
+          {docReady ? (
+            <div className="mt-3">
+              <Button
+                variant="outline"
+                className="h-9 bg-card"
+                disabled={docBusy}
+                onClick={() => void descargarDocumento()}
+              >
+                <FileDown size={16} strokeWidth={1.75} />
+                {docBusy ? "Preparando Word…" : `Descargar ${docReady.titulo}`}
+              </Button>
+              <p className="mt-1.5 text-[11px] text-muted-foreground">
+                Sale con los datos del trabajador y las fechas programadas. Solo falta imprimir y firmar.
+              </p>
+            </div>
+          ) : null}
+          {docError ? <p className="mt-2 text-[12px] text-error">{docError}</p> : null}
         </Alert>
       ) : null}
 
@@ -908,8 +741,11 @@ export function PlanPage() {
             type="number"
             min={1}
             max={MAX_VAC_DAYS}
-            value={consec.days}
-            onChange={(e) => setConsec({ ...consec, days: Number(e.target.value) })}
+            value={consec.days > 0 ? consec.days : ""}
+            onChange={(e) => {
+              const raw = e.target.value;
+              setConsec({ ...consec, days: raw === "" ? 0 : Number(raw) });
+            }}
           />
         </Field>
         <div className="flex flex-col gap-2 sm:col-span-2 sm:flex-row md:col-span-3">
@@ -950,12 +786,12 @@ export function PlanPage() {
         </div>
         {finEstimado ? (
           <p className="text-[12px] text-muted-foreground sm:col-span-2 md:col-span-3">
-            Termina el {formatFechaIso(finEstimado)}
-            {consec.days === MAX_VAC_DAYS ? " · goce completo" : " · fraccionamiento si ya hay otros tramos"}
+            Del {formatFechaIso(consec.start)} al {formatFechaIso(finEstimado)} ({consec.days} días
+            corridos).
           </p>
         ) : null}
         <p className="text-[11px] text-muted-foreground sm:col-span-2 md:col-span-3">
-          Art. 8: un bloque de 15 días corridos, o 7+8. El resto, desde 1 día. Sin cruces de fechas.
+          Varios tramos: 15 días corridos, o 7 y 8.
         </p>
       </div>
 
@@ -1146,8 +982,11 @@ export function PlanPage() {
                     type="number"
                     min={1}
                     max={consecWorker && esAdelanto(consecWorker) ? topeDe(consecWorker) : MAX_VAC_DAYS}
-                    value={consec.days}
-                    onChange={(e) => setConsec({ ...consec, days: Number(e.target.value) })}
+                    value={consec.days > 0 ? consec.days : ""}
+                    onChange={(e) => {
+                      const raw = e.target.value;
+                      setConsec({ ...consec, days: raw === "" ? 0 : Number(raw) });
+                    }}
                   />
                 </Field>
               </div>

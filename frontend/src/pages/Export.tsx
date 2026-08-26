@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { API, api, authHeader, qs } from "../api";
+import { api, downloadFile, qs } from "../api";
+import { isoWeek } from "../lib/dates";
 import { useApp } from "../state";
 import { Alert, Button, Icon, PageHeader } from "../components/ui";
 
@@ -12,14 +13,6 @@ const SHEETS = [
 ] as const;
 
 type Group = { code: string; title: string; hint: string; count: number; samples: string[] };
-
-function isoWeek(d = new Date()) {
-  const t = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
-  const day = t.getUTCDay() || 7;
-  t.setUTCDate(t.getUTCDate() + 4 - day);
-  const yearStart = new Date(Date.UTC(t.getUTCFullYear(), 0, 1));
-  return { year: t.getUTCFullYear(), week: Math.ceil(((t.getTime() - yearStart.getTime()) / 86400000 + 1) / 7) };
-}
 
 function weekFromText(text: string): number | null {
   const m = text.match(/SEM\s*0*(\d+)|semana\s+(\d+)/i);
@@ -130,31 +123,11 @@ export function ExportPage() {
   async function download() {
     setBusy(true);
     setDownloadError("");
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 60_000);
     try {
-      const res = await fetch(`${API}/api/export${qs({ ...params, label: "PLAN" })}`, {
-        headers: authHeader(),
-        signal: controller.signal,
-      });
-      if (!res.ok) throw new Error("No se pudo generar el Excel. Inténtalo de nuevo.");
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `VACACIONES_${filters.year}.xlsx`;
-      a.click();
-      URL.revokeObjectURL(url);
+      await downloadFile(`/api/export${qs({ ...params, label: "PLAN" })}`, {}, `VACACIONES_${filters.year}.xlsx`);
     } catch (e) {
-      const msg =
-        e instanceof DOMException && e.name === "AbortError"
-          ? "Generar el Excel tardó demasiado. Inténtalo de nuevo."
-          : e instanceof Error
-            ? e.message
-            : "No se pudo generar el Excel. Inténtalo de nuevo.";
-      setDownloadError(msg);
+      setDownloadError(e instanceof Error ? e.message : "No se pudo generar el Excel. Inténtalo de nuevo.");
     } finally {
-      clearTimeout(timer);
       setBusy(false);
     }
   }

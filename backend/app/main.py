@@ -16,7 +16,7 @@ from .routers.plan import router as plan_router
 from .routers.reports import router as reports_router
 
 # Cambia con cada fix de deploy para verificar en /api/version qué código está vivo.
-DEPLOY_MARK = "excel-hueco-vs-bd-v1"
+DEPLOY_MARK = "docs-word-escenarios-v1"
 
 
 @asynccontextmanager

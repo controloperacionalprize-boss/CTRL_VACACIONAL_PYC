@@ -7,7 +7,7 @@ from .holidays_pe import peru_holidays
 
 
 def exento_control_asistencia(worker) -> bool:
-    """Directivos suelen no marcar biométrico pero sí laboran: no pintar falta ni asistencia."""
+    """Jefes/gerentes/subgerentes suelen no marcar biométrico: no pintar faltas; sí pintar asistencia (verde)."""
     cargo = (worker.get("cargo_actual") or "").strip().lower()
     return any(k in cargo for k in ("jefe", "gerente", "sub gerente"))
 
@@ -35,6 +35,8 @@ def employee_calendar_payload(
 
     no_laborables: list[str] = []
     sin_marcacion: list[str] = []
+    # Jefes/gerentes: verde en días laborables cubiertos (no marcan biométrico).
+    asist_exento: list[str] = []
     d = date(anio, 1, 1)
     end = date(anio + 1, 1, 1)
     while d < end:
@@ -44,14 +46,11 @@ def employee_calendar_payload(
             continue
         if d.weekday() >= 5 or d in holidays:
             no_laborables.append(d.isoformat())
-        elif (
-            attendance_ok
-            and not exento
-            and desde <= d <= hasta
-            and d not in vac
-            and d not in asist
-        ):
-            sin_marcacion.append(d.isoformat())
+        elif attendance_ok and desde <= d <= hasta and d not in vac:
+            if exento:
+                asist_exento.append(d.isoformat())
+            elif d not in asist:
+                sin_marcacion.append(d.isoformat())
         d += timedelta(days=1)
 
     periodos = []
@@ -66,6 +65,15 @@ def employee_calendar_payload(
     rec = vacation_record_for(f_ingreso if isinstance(f_ingreso, date) else None, fechas, anio, today)
     cumple = rec["cumple_record"]
     vencimiento = rec["fecha_vencimiento"]
+
+    if exento:
+        asistencia_out = asist_exento
+    else:
+        asistencia_out = sorted(
+            x.isoformat()
+            for x in asist
+            if not isinstance(f_ingreso, date) or x >= f_ingreso
+        )
 
     return {
         "empleado": worker,
@@ -84,11 +92,7 @@ def employee_calendar_payload(
             "derecho": DERECHO_ANUAL,
         },
         "fechas": [x.isoformat() for x in fechas],
-        "asistencia": sorted(
-            x.isoformat()
-            for x in asist
-            if not exento and (not isinstance(f_ingreso, date) or x >= f_ingreso)
-        ),
+        "asistencia": asistencia_out,
         "sin_marcacion": sin_marcacion,
         "no_laborables": no_laborables,
         "attendance_ok": attendance_ok,

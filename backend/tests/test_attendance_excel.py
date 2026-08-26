@@ -1,11 +1,7 @@
 from datetime import date
 from io import BytesIO
-import sys
-from pathlib import Path
 
 import pandas as pd
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.attendance import fetch_merged_attendance
 from app import attendance_excel as xlmod

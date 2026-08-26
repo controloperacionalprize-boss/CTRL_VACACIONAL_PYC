@@ -10,7 +10,6 @@ from __future__ import annotations
 import json
 import re
 import time
-import unicodedata
 import urllib.error
 import urllib.request
 from difflib import get_close_matches
@@ -18,6 +17,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from .config import get_settings
+from .textnorm import strip_marks
 
 _IMG_EXT = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
 _CACHE: tuple[float, dict[str, str]] | None = None
@@ -26,8 +26,7 @@ _PARTICULAS = {"de", "del", "la", "las", "los", "y", "e", "da", "do", "das", "do
 _ROSTER_PATH = Path(__file__).resolve().parent / "data" / "personal_roster.json"
 
 def _strip_accents(s: str) -> str:
-    nk = unicodedata.normalize("NFD", s)
-    return "".join(c for c in nk if unicodedata.category(c) != "Mn")
+    return strip_marks(s)
 
 
 def normalize_token(s: str) -> str:
