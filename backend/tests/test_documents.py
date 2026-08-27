@@ -2,6 +2,7 @@
 
 from datetime import date
 from io import BytesIO
+from zipfile import ZipFile
 
 import pytest
 from docx import Document
@@ -167,3 +168,25 @@ def test_reconstruye_periodo_anterior():
     old = reconstruct_old_periods(new, date(2026, 9, 1), date(2026, 10, 5))
     assert old[0]["inicio"] == date(2026, 9, 1)
     assert old[0]["fin"] == date(2026, 9, 15)
+
+
+def test_word_generado_sin_comentarios_de_plantilla():
+    data = fill_template(
+        2,
+        _ctx(
+            fin=date(2026, 9, 15),
+            dias=15,
+            periodos=[{"inicio": date(2026, 9, 1), "fin": date(2026, 9, 15), "dias": 15}],
+            programmed=[date(2026, 9, 1)],
+        ),
+    )
+    with ZipFile(BytesIO(data)) as z:
+        names = z.namelist()
+        assert "word/comments.xml" not in names
+        assert "word/people.xml" not in names
+        xml = z.read("word/document.xml").decode("utf-8")
+        assert "commentRangeStart" not in xml
+        assert "commentReference" not in xml
+        rels = z.read("word/_rels/document.xml.rels").decode("utf-8")
+        assert "comments" not in rels.lower()
+    assert "ANA PEREZ GOMEZ" in _all_text(data)

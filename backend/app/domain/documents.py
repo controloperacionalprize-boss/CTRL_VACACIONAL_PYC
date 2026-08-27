@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import date
 from io import BytesIO
 from pathlib import Path
+from zipfile import ZIP_DEFLATED, ZipFile
 
 from docx import Document
 from docx.oxml import OxmlElement
@@ -364,9 +365,73 @@ def fill_template(escenario: int, ctx: DocContext) -> bytes:
         _fill_periods_table(table, periods)
 
     _tighten_blank_paragraphs(doc, keep=1)
+    _strip_comment_markup(doc.element)
     buf = BytesIO()
     doc.save(buf)
-    return buf.getvalue()
+    return _strip_comment_parts(buf.getvalue())
+
+
+_COMMENT_PARTS = (
+    "word/comments.xml",
+    "word/commentsExtended.xml",
+    "word/commentsIds.xml",
+    "word/commentsExtensible.xml",
+    "word/people.xml",
+)
+_COMMENT_NS_TAGS = (
+    qn("w:commentRangeStart"),
+    qn("w:commentRangeEnd"),
+    qn("w:commentReference"),
+)
+
+
+def _strip_comment_markup(root) -> None:
+    """Quita marcas de comentario de Word (globos / panel de revisión)."""
+    for tag in _COMMENT_NS_TAGS:
+        for node in root.findall(f".//{tag}"):
+            parent = node.getparent()
+            if parent is None:
+                continue
+            parent.remove(node)
+            if parent.tag == qn("w:r") and not any(c.tag != qn("w:rPr") for c in parent):
+                grand = parent.getparent()
+                if grand is not None:
+                    grand.remove(parent)
+
+
+def _drop_xml_nodes(xml: bytes, *, attr: str, needles: tuple[str, ...]) -> bytes:
+    text = xml.decode("utf-8")
+    pattern = (
+        r"<[^>]*"
+        + re.escape(attr)
+        + r'="[^"]*(?:'
+        + "|".join(re.escape(n) for n in needles)
+        + r')[^"]*"[^>]*/>'
+    )
+    return re.sub(pattern, "", text).encode("utf-8")
+
+
+def _strip_comment_parts(data: bytes) -> bytes:
+    """Elimina partes de comentarios del paquete .docx."""
+    src = ZipFile(BytesIO(data))
+    out = BytesIO()
+    drop = set(_COMMENT_PARTS)
+    with ZipFile(out, "w", ZIP_DEFLATED) as dest:
+        for info in src.infolist():
+            if info.filename in drop:
+                continue
+            payload = src.read(info.filename)
+            if info.filename == "[Content_Types].xml":
+                payload = _drop_xml_nodes(
+                    payload, attr="PartName", needles=("/word/comments", "/word/people.xml")
+                )
+            elif info.filename.endswith(".rels"):
+                payload = _drop_xml_nodes(
+                    payload, attr="Type", needles=("relationships/comments", "relationships/people")
+                )
+            dest.writestr(info, payload)
+    src.close()
+    return out.getvalue()
 
 
 def filename_for(escenario: int, ctx: DocContext) -> str:
