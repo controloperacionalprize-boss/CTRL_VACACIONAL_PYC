@@ -141,20 +141,26 @@ export function PlanPage() {
     return Array.from({ length: end - start + 1 }, (_, i) => start + i);
   }, [plan?.current_week, plan?.total_semanas]);
 
+  const gridWorkers = useMemo(
+    () => (plan?.workers || []).filter((w) => !esAdelanto(w)),
+    [plan?.workers]
+  );
+  const ocultosSinAnio = (plan?.workers.length || 0) - gridWorkers.length;
+
   const searchIndex = useMemo(
     () =>
-      (plan?.workers || []).map((w) => ({
+      gridWorkers.map((w) => ({
         w,
         hay: `${w.nombre} ${w.dni} ${w.area} ${w.tipo_personal} ${w.division} ${w.gerencia}`.toLowerCase(),
       })),
-    [plan?.workers]
+    [gridWorkers]
   );
 
   const visible = useMemo(() => {
     const terms = deferredQ.trim().toLowerCase().split(/\s+/).filter(Boolean);
-    if (!terms.length) return plan?.workers || [];
+    if (!terms.length) return gridWorkers;
     return searchIndex.filter((row) => terms.every((t) => row.hay.includes(t))).map((row) => row.w);
-  }, [deferredQ, plan?.workers, searchIndex]);
+  }, [deferredQ, gridWorkers, searchIndex]);
 
   const consecMatches = useMemo(() => {
     const workers = plan?.workers || [];
@@ -754,7 +760,14 @@ export function PlanPage() {
                         <EmpAvatar nombre={w.nombre} fotoUrl={w.foto_url} className="h-7 w-7 text-[9px]" />
                         <span className="min-w-0 truncate font-medium">{w.nombre}</span>
                       </span>
-                      <span className="shrink-0 font-data text-[11px] text-muted-foreground">{w.dni}</span>
+                      <span className="flex shrink-0 items-center gap-2">
+                        {esAdelanto(w) ? (
+                          <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                            Sin año
+                          </span>
+                        ) : null}
+                        <span className="font-data text-[11px] text-muted-foreground">{w.dni}</span>
+                      </span>
                     </button>
                   ))
                 )}
@@ -840,13 +853,13 @@ export function PlanPage() {
         <p className="text-[11px] text-muted-foreground sm:col-span-2 md:col-span-3">
           {workerReady
             ? workerEsAdelanto
-              ? `Aún no cumple el año: solo Adelanto (acumulado ${topeDe(consecWorker)} día(s), quedan ${saldoRestante}). La grilla no se edita.`
+              ? `Aún no cumple el año: solo Adelanto (acumulado ${topeDe(consecWorker)} día(s), quedan ${saldoRestante}). No aparece en la tabla.`
               : `Ya cumplió el año: programa o modifica el goce. Quedan ${saldoRestante} día(s). En la grilla, Enter o clic fuera guarda.`
             : "Selecciona a la persona para habilitar Programar, Adelanto o Modificar período."}
         </p>
       </div>
 
-      <div className="flex w-full max-w-sm items-center gap-2">
+      <div className="flex w-full max-w-xl flex-wrap items-center gap-2">
         <Input
           type="search"
           autoComplete="off"
@@ -858,7 +871,12 @@ export function PlanPage() {
         />
         {q ? (
           <span className="whitespace-nowrap text-xs text-muted-foreground">
-            {visible.length} de {plan.workers.length}
+            {visible.length} de {gridWorkers.length}
+          </span>
+        ) : null}
+        {ocultosSinAnio > 0 ? (
+          <span className="text-[11px] text-muted-foreground">
+            {ocultosSinAnio} persona{ocultosSinAnio === 1 ? "" : "s"} sin año cumplido: no van en la tabla (Adelanto arriba).
           </span>
         ) : null}
       </div>
@@ -867,6 +885,11 @@ export function PlanPage() {
         <EmptyState
           title="No hay trabajadores"
           body="Cambia el año, la empresa, la gerencia o el área. Con este filtro no aparece nadie."
+        />
+      ) : gridWorkers.length === 0 ? (
+        <EmptyState
+          title="Nadie con año cumplido"
+          body="En este filtro nadie puede ir a la grilla todavía. Búscalos arriba y usa Adelanto vacacional."
         />
       ) : visible.length === 0 ? (
         <EmptyState title="Nadie coincide" body="Prueba con otro nombre, DNI o área." />
