@@ -5,6 +5,7 @@ import { api, qs } from "../api";
 import { useApp } from "../state";
 import { SnakeTimeline, type SnakePaso } from "../components/SnakeTimeline";
 import { Alert, Button, EmptyState, Field, Input, PageHeader, Select } from "../components/ui";
+import { EmpleadosRoster } from "./admin/EmpleadosRoster";
 
 type AppUser = {
   correo: string;
@@ -143,7 +144,7 @@ function ThreadCard({
 
 export function AdminPage() {
   const { user, filters } = useApp();
-  const [tab, setTab] = useState<"users" | "logs">("users");
+  const [tab, setTab] = useState<"users" | "logs" | "empleados">("users");
   const [users, setUsers] = useState<AppUser[]>([]);
   const [gerencias, setGerencias] = useState<string[]>([]);
   const [form, setForm] = useState(emptyForm);
@@ -242,6 +243,9 @@ export function AdminPage() {
       <div className="flex gap-2 overflow-x-auto">
         <Button variant={tab === "users" ? "primary" : "outline"} onClick={() => setTab("users")} className="shrink-0">
           Usuarios
+        </Button>
+        <Button variant={tab === "empleados" ? "primary" : "outline"} onClick={() => setTab("empleados")} className="shrink-0">
+          Empleados
         </Button>
         <Button variant={tab === "logs" ? "primary" : "outline"} onClick={() => setTab("logs")} className="shrink-0">
           Historial de cambios
@@ -372,6 +376,8 @@ export function AdminPage() {
         </table>
       </div>
         </>
+      ) : tab === "empleados" ? (
+        <EmpleadosRoster />
       ) : (
         <>
           <Input

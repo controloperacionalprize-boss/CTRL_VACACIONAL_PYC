@@ -98,11 +98,12 @@ export async function downloadFile(path: string, init: RequestInit = {}, fallbac
   URL.revokeObjectURL(url);
 }
 
-export function qs(params: Record<string, string | number | string[] | undefined>) {
+export function qs(params: Record<string, string | number | boolean | string[] | undefined>) {
   const u = new URLSearchParams();
   Object.entries(params).forEach(([k, v]) => {
     if (v === undefined || v === "") return;
     if (Array.isArray(v)) v.forEach((item) => u.append(k, item));
+    else if (typeof v === "boolean") u.set(k, v ? "true" : "false");
     else u.set(k, String(v));
   });
   const s = u.toString();

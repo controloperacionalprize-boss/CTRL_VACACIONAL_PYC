@@ -86,6 +86,8 @@ export function PlanPage() {
   const [modificarError, setModificarError] = useState("");
   const [periodos, setPeriodos] = useState<VacPeriod[]>([]);
   const [periodosLoading, setPeriodosLoading] = useState(false);
+  const [savingCell, setSavingCell] = useState<{ dni: string; week: number } | null>(null);
+  const [periodosTick, setPeriodosTick] = useState(0);
   const [periodoSel, setPeriodoSel] = useState("");
   const [modStart, setModStart] = useState("");
   const [loadError, setLoadError] = useState("");
@@ -184,7 +186,7 @@ export function PlanPage() {
   }
 
   useEffect(() => {
-    if (!modificarOpen || !consec.dni) {
+    if (!consec.dni) {
       setPeriodos([]);
       return;
     }
@@ -204,7 +206,7 @@ export function PlanPage() {
     return () => {
       cancelled = true;
     };
-  }, [modificarOpen, consec.dni, params.year]);
+  }, [consec.dni, params.year, periodosTick]);
 
   const applyLocalWeeks = useCallback((dni: string, updates: Record<number, number>) => {
     setPlan((p) => {
@@ -233,6 +235,7 @@ export function PlanPage() {
         setError(msg);
         return msg;
       }
+      setSavingCell({ dni: w.dni, week });
       try {
         const res = await api<{
           weeks?: Record<string, number>;
@@ -251,6 +254,7 @@ export function PlanPage() {
         });
         const updates = weeksFromApi(res, week, days);
         applyLocalWeeks(w.dni, updates);
+        setPeriodosTick((n) => n + 1);
         const spill = Object.keys(updates).filter((k) => Number(k) !== week);
         if (res.documento && days > 0 && startDate) {
           const fin = res.fin || (res.fechas && res.fechas[res.fechas.length - 1]) || "";
@@ -281,6 +285,8 @@ export function PlanPage() {
         const msg = e instanceof Error ? e.message : "No se pudo guardar la semana.";
         setError(msg);
         return msg;
+      } finally {
+        setSavingCell(null);
       }
     },
     [applyLocalWeeks, params, plan?.year, plan?.current_year, plan?.current_week]
@@ -288,10 +294,11 @@ export function PlanPage() {
 
   const onDays = useCallback(
     (w: Worker, week: number, days: number) => {
-      if (esAdelanto(w) && days > 0) {
+      if (savingCell) return;
+      if (esAdelanto(w)) {
         setOk("");
         setError(
-          `${w.nombre} aún no cumple el año de servicio. Programa esos días con Adelanto vacacional.`
+          `${w.nombre} aún no cumple el año de servicio. Usa Adelanto vacacional o Modificar período.`
         );
         return;
       }
@@ -300,8 +307,8 @@ export function PlanPage() {
         return;
       }
       const prevDays = w.weeks[week - 1] || 0;
+      if (days === prevDays) return;
       if (days === 0) {
-        applyLocalWeeks(w.dni, { [week]: 0 });
         void setWeek(w, week, 0).then((msg) => {
           if (msg) applyLocalWeeks(w.dni, { [week]: prevDays });
         });
@@ -319,8 +326,6 @@ export function PlanPage() {
       setWeekDays([]);
       setError("");
       setOk("");
-      // No pintar N>7 en una sola celda: el valor real llega al guardar (derrame).
-      if (days <= 7) applyLocalWeeks(w.dni, { [week]: days });
       setModal({
         dni: w.dni,
         nombre: w.nombre,
@@ -332,7 +337,7 @@ export function PlanPage() {
         tope: MAX_VAC_DAYS,
       });
     },
-    [applyLocalWeeks, setWeek]
+    [applyLocalWeeks, savingCell, setWeek]
   );
 
   useEffect(() => {
@@ -423,6 +428,7 @@ export function PlanPage() {
         }
       );
       await load();
+      setPeriodosTick((n) => n + 1);
       const fin = res.fin || (res.fechas && res.fechas[res.fechas.length - 1]) || "";
       setDocError("");
       setDocReady(
@@ -499,6 +505,7 @@ export function PlanPage() {
         }
       );
       await load();
+      setPeriodosTick((n) => n + 1);
       setAdelantoOpen(false);
       const fin = res.fin || (res.fechas && res.fechas[res.fechas.length - 1]) || "";
       setDocError("");
@@ -566,6 +573,7 @@ export function PlanPage() {
         }),
       });
       await load();
+      setPeriodosTick((n) => n + 1);
       setModificarOpen(false);
       setDocError("");
       setDocReady(
@@ -638,6 +646,35 @@ export function PlanPage() {
   const minProgramable = plan.today || localTodayIso();
   const finEstimado =
     consec.start && consec.days > 0 ? addDaysIso(consec.start, consec.days - 1) : "";
+  const workerReady = Boolean(consecWorker);
+  const workerEsAdelanto = esAdelanto(consecWorker);
+  const saldoRestante = consecWorker
+    ? diasDisponibles(consecWorker.total_dias, topeDe(consecWorker))
+    : 0;
+  const canProgramar = workerReady && !workerEsAdelanto && saldoRestante > 0;
+  const canAdelanto = workerReady && workerEsAdelanto && saldoRestante > 0;
+  const canModificar = workerReady && !periodosLoading && periodos.some((p) => p.editable);
+  const programarTitle = !workerReady
+    ? "Selecciona a la persona."
+    : workerEsAdelanto
+      ? "Aún no cumple el año. Usa Adelanto vacacional."
+      : saldoRestante <= 0
+        ? "Ya tiene todos los días programados."
+        : undefined;
+  const adelantoTitle = !workerReady
+    ? "Selecciona a la persona."
+    : !workerEsAdelanto
+      ? "Ya cumplió el año; debe gozar sus vacaciones con Programar."
+      : saldoRestante <= 0
+        ? "Ya usó el acumulado de adelanto."
+        : undefined;
+  const modificarTitle = !workerReady
+    ? "Selecciona a la persona."
+    : periodosLoading
+      ? "Cargando períodos…"
+      : !canModificar
+        ? "No tiene un período futuro para mover."
+        : undefined;
 
   return (
     <div className="space-y-6">
@@ -749,40 +786,50 @@ export function PlanPage() {
           />
         </Field>
         <div className="flex flex-col gap-2 sm:col-span-2 sm:flex-row md:col-span-3">
-          <Button onClick={programarConsec} disabled={consecSaving} className="w-full md:w-auto">
-            <CalendarPlus size={16} strokeWidth={1.75} />
-            {consecSaving && !adelantoOpen ? "Guardando…" : "Programar vacaciones"}
-          </Button>
-          <Button
-            variant="outline"
-            disabled={consecSaving}
-            className="w-full md:w-auto"
-            onClick={() => {
-              setAdelantoError("");
-              setError("");
-              setOk("");
-              setAdelantoOpen(true);
-            }}
-          >
-            <CalendarClock size={16} strokeWidth={1.75} />
-            Adelanto vacacional
-          </Button>
-          <Button
-            variant="outline"
-            disabled={consecSaving}
-            className="w-full md:w-auto"
-            onClick={() => {
-              setModificarError("");
-              setError("");
-              setOk("");
-              setPeriodoSel("");
-              setModStart(minProgramable);
-              setModificarOpen(true);
-            }}
-          >
-            <CalendarRange size={16} strokeWidth={1.75} />
-            Modificar período
-          </Button>
+          <span title={programarTitle} className="w-full md:w-auto">
+            <Button
+              onClick={programarConsec}
+              disabled={consecSaving || !canProgramar}
+              className="w-full md:w-auto"
+            >
+              <CalendarPlus size={16} strokeWidth={1.75} />
+              {consecSaving && !adelantoOpen && !modificarOpen ? "Guardando…" : "Programar vacaciones"}
+            </Button>
+          </span>
+          <span title={adelantoTitle} className="w-full md:w-auto">
+            <Button
+              variant="outline"
+              disabled={consecSaving || !canAdelanto}
+              className="w-full md:w-auto"
+              onClick={() => {
+                setAdelantoError("");
+                setError("");
+                setOk("");
+                setAdelantoOpen(true);
+              }}
+            >
+              <CalendarClock size={16} strokeWidth={1.75} />
+              Adelanto vacacional
+            </Button>
+          </span>
+          <span title={modificarTitle} className="w-full md:w-auto">
+            <Button
+              variant="outline"
+              disabled={consecSaving || !canModificar}
+              className="w-full md:w-auto"
+              onClick={() => {
+                setModificarError("");
+                setError("");
+                setOk("");
+                setPeriodoSel("");
+                setModStart(minProgramable);
+                setModificarOpen(true);
+              }}
+            >
+              <CalendarRange size={16} strokeWidth={1.75} />
+              Modificar período
+            </Button>
+          </span>
         </div>
         {finEstimado ? (
           <p className="text-[12px] text-muted-foreground sm:col-span-2 md:col-span-3">
@@ -791,7 +838,11 @@ export function PlanPage() {
           </p>
         ) : null}
         <p className="text-[11px] text-muted-foreground sm:col-span-2 md:col-span-3">
-          Varios tramos: 15 días corridos, o 7 y 8.
+          {workerReady
+            ? workerEsAdelanto
+              ? `Aún no cumple el año: solo Adelanto (acumulado ${topeDe(consecWorker)} día(s), quedan ${saldoRestante}). La grilla no se edita.`
+              : `Ya cumplió el año: programa o modifica el goce. Quedan ${saldoRestante} día(s). En la grilla, Enter o clic fuera guarda.`
+            : "Selecciona a la persona para habilitar Programar, Adelanto o Modificar período."}
         </p>
       </div>
 
@@ -826,7 +877,15 @@ export function PlanPage() {
               Semanas {weekWindow[0]}–{weekWindow[weekWindow.length - 1]} (alrededor de la actual). En escritorio ves el año completo.
             </p>
             {visible.map((w) => (
-              <WorkerCard key={w.dni} w={w} weekWindow={weekWindow} lockedWeeks={lockedWeeks} onDays={onDays} />
+              <WorkerCard
+                key={w.dni}
+                w={w}
+                weekWindow={weekWindow}
+                lockedWeeks={lockedWeeks}
+                onDays={onDays}
+                gridLocked={esAdelanto(w)}
+                savingWeek={savingCell?.dni === w.dni ? savingCell.week : null}
+              />
             ))}
           </div>
           <div className="hidden max-h-[70vh] overflow-auto rounded-[8px] border border-border bg-card shadow-[var(--shadow-card)] md:block">
@@ -859,7 +918,14 @@ export function PlanPage() {
               </thead>
               <tbody>
                 {visible.map((w) => (
-                  <WorkerRow key={w.dni} w={w} lockedWeeks={lockedWeeks} onDays={onDays} />
+                  <WorkerRow
+                    key={w.dni}
+                    w={w}
+                    lockedWeeks={lockedWeeks}
+                    onDays={onDays}
+                    gridLocked={esAdelanto(w)}
+                    savingWeek={savingCell?.dni === w.dni ? savingCell.week : null}
+                  />
                 ))}
               </tbody>
             </table>
@@ -1008,7 +1074,7 @@ export function PlanPage() {
               >
                 Cancelar
               </Button>
-              <Button disabled={consecSaving} onClick={() => void guardarAdelanto()}>
+              <Button disabled={consecSaving || !consecWorker || !esAdelanto(consecWorker)} onClick={() => void guardarAdelanto()}>
                 {consecSaving && adelantoOpen ? "Guardando…" : "Guardar adelanto"}
               </Button>
             </div>
@@ -1099,7 +1165,7 @@ export function PlanPage() {
               >
                 Cancelar
               </Button>
-              <Button disabled={consecSaving} onClick={() => void guardarModificar()}>
+              <Button disabled={consecSaving || !periodoSel} onClick={() => void guardarModificar()}>
                 {consecSaving && modificarOpen ? "Guardando…" : "Guardar cambio"}
               </Button>
             </div>
@@ -1122,7 +1188,7 @@ export function PlanPage() {
                 <span className="font-semibold text-foreground">{modal.days}</span> día
                 {modal.days === 1 ? "" : "s"} · saldo{" "}
                 <span className="font-semibold text-foreground">{modal.disponibles}</span>/
-                {modal.tope}
+                {modal.tope}. Se escribe en la grilla al guardar.
               </p>
             </div>
             <div className="space-y-3 px-5 py-3">

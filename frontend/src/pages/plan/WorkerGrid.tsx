@@ -17,12 +17,16 @@ const WeekInput = memo(function WeekInput({
   worker,
   onCommit,
   className,
+  disabled,
+  saving,
 }: {
   value: number;
   week: number;
   worker: Worker;
   onCommit: (w: Worker, week: number, days: number) => void;
   className: string;
+  disabled?: boolean;
+  saving?: boolean;
 }) {
   const [draft, setDraft] = useState(String(value));
   const committedRef = useRef(value);
@@ -46,11 +50,8 @@ const WeekInput = memo(function WeekInput({
     const clamped = Math.max(0, Math.min(MAX_VAC_DAYS, Math.round(n)));
     if (clamped !== prev) {
       onCommit(worker, week, clamped);
-      // >7 no se pinta en la celda hasta guardar (derrame); mantener valor anterior a la vista.
-      if (clamped > 7) {
-        setDraft(String(prev));
-        return;
-      }
+      setDraft(String(prev));
+      return;
     }
     setDraft(String(clamped));
   }
@@ -60,16 +61,24 @@ const WeekInput = memo(function WeekInput({
       type="number"
       min={0}
       max={MAX_VAC_DAYS}
-      title={`0–${MAX_VAC_DAYS} días (más de 7 se reparte en semanas siguientes)`}
-      value={draft}
+      disabled={disabled || saving}
+      title={
+        saving
+          ? "Guardando…"
+          : `0–${MAX_VAC_DAYS} días. Enter o clic fuera para guardar (más de 7 se reparte en semanas siguientes).`
+      }
+      value={saving ? "…" : draft}
       onChange={(e) => setDraft(e.target.value)}
       onKeyDown={(e) => {
         if (e.key !== "Enter") return;
         e.preventDefault();
         (e.target as HTMLInputElement).blur();
       }}
-      onBlur={(e) => commit(e.target.value)}
-      className={className}
+      onBlur={(e) => {
+        if (disabled || saving) return;
+        commit(e.target.value);
+      }}
+      className={cn(className, saving && "animate-pulse")}
       style={{ background: value ? cellColor(value) : "transparent" }}
     />
   );
@@ -79,10 +88,14 @@ export const WorkerRow = memo(function WorkerRow({
   w,
   lockedWeeks,
   onDays,
+  gridLocked,
+  savingWeek,
 }: {
   w: Worker;
   lockedWeeks: boolean[];
   onDays: (w: Worker, week: number, days: number) => void;
+  gridLocked?: boolean;
+  savingWeek?: number | null;
 }) {
   return (
     <tr className="hover:bg-muted/60" style={{ contentVisibility: "auto", containIntrinsicSize: "auto 32px" }}>
@@ -99,11 +112,16 @@ export const WorkerRow = memo(function WorkerRow({
       {w.weeks.map((val, idx) => {
         const week = idx + 1;
         const locked = lockedWeeks[idx];
-        const bg = val ? cellColor(val) : locked ? "var(--muted)" : "transparent";
-        if (locked) {
+        const bg = val ? cellColor(val) : locked || gridLocked ? "var(--muted)" : "transparent";
+        if (locked || gridLocked) {
           return (
             <td
               key={week}
+              title={
+                gridLocked && !locked
+                  ? "Aún no cumple el año. Usa Adelanto vacacional o Modificar período."
+                  : undefined
+              }
               className="h-8 w-9 border-b border-border p-0 text-center text-[11px] font-medium text-muted-foreground"
               style={{ background: bg }}
             >
@@ -118,6 +136,7 @@ export const WorkerRow = memo(function WorkerRow({
               week={week}
               worker={w}
               onCommit={onDays}
+              saving={savingWeek === week}
               className="h-8 w-9 bg-transparent text-center text-[11px] font-medium outline-none"
             />
           </td>
@@ -132,11 +151,15 @@ export const WorkerCard = memo(function WorkerCard({
   weekWindow,
   lockedWeeks,
   onDays,
+  gridLocked,
+  savingWeek,
 }: {
   w: Worker;
   weekWindow: number[];
   lockedWeeks: boolean[];
   onDays: (w: Worker, week: number, days: number) => void;
+  gridLocked?: boolean;
+  savingWeek?: number | null;
 }) {
   return (
     <article className="rounded-xl border border-border bg-card p-3.5 shadow-[var(--shadow-card)]">
@@ -164,12 +187,17 @@ export const WorkerCard = memo(function WorkerCard({
           const idx = week - 1;
           const val = w.weeks[idx] || 0;
           const locked = lockedWeeks[idx];
-          const bg = val ? cellColor(val) : locked ? "var(--muted)" : "transparent";
+          const bg = val ? cellColor(val) : locked || gridLocked ? "var(--muted)" : "transparent";
           return (
             <label key={week} className="flex flex-col items-center gap-0.5">
               <span className="text-[9px] font-semibold text-muted-foreground">S{week}</span>
-              {locked ? (
+              {locked || gridLocked ? (
                 <span
+                  title={
+                    gridLocked && !locked
+                      ? "Aún no cumple el año. Usa Adelanto vacacional o Modificar período."
+                      : undefined
+                  }
                   className="flex h-9 w-full items-center justify-center rounded-md border border-border text-[11px] font-medium text-muted-foreground"
                   style={{ background: bg }}
                 >
@@ -181,6 +209,7 @@ export const WorkerCard = memo(function WorkerCard({
                   week={week}
                   worker={w}
                   onCommit={onDays}
+                  saving={savingWeek === week}
                   className="h-9 w-full rounded-md border border-border text-center text-[11px] font-medium outline-none"
                 />
               )}

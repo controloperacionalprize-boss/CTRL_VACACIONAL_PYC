@@ -12,7 +12,7 @@ EMP_COLS = (
 )
 
 
-def employee_from_row(row) -> dict:
+def employee_from_row(row, *, with_photo: bool = True) -> dict:
     fi = row["fecha_ingreso"]
     fc = row.get("fecha_cese")
     emp = {
@@ -30,7 +30,7 @@ def employee_from_row(row) -> dict:
         "vigencia": str(row.get("vigencia") or "").strip(),
         "fecha_cese": fc.isoformat() if isinstance(fc, date) else (str(fc) if fc else None),
     }
-    return enrich_employee_photo(emp)
+    return enrich_employee_photo(emp) if with_photo else emp
 
 
 def _scope_sql(user: dict, empresa, gerencia, area, q: str | None = None) -> tuple[str, list]:
@@ -59,10 +59,53 @@ def _scope_sql(user: dict, empresa, gerencia, area, q: str | None = None) -> tup
     return sql, params
 
 
-def list_employees(cur, user: dict, empresa=None, gerencia=None, area=None, q: str | None = None):
+def list_employees(
+    cur,
+    user: dict,
+    empresa=None,
+    gerencia=None,
+    area=None,
+    q: str | None = None,
+    *,
+    with_photos: bool = True,
+):
     where, params = _scope_sql(user, empresa, gerencia, area, q)
-    cur.execute(f"SELECT {EMP_COLS}{where} ORDER BY nombre", params)
-    return [employee_from_row(r) for r in cur.fetchall()]
+    cur.execute(f"SELECT {EMP_COLS}{where} ORDER BY nombre, dni", params)
+    return [employee_from_row(r, with_photo=with_photos) for r in cur.fetchall()]
+
+
+_EMP_SORT = {
+    "nombre": "nombre",
+    "fecha_ingreso": "fecha_ingreso",
+}
+
+
+def list_employees_page(
+    cur,
+    user: dict,
+    empresa=None,
+    gerencia=None,
+    area=None,
+    q: str | None = None,
+    *,
+    limit: int,
+    offset: int,
+    with_photos: bool = False,
+    sort: str = "nombre",
+    order: str = "asc",
+) -> tuple[list[dict], int]:
+    where, params = _scope_sql(user, empresa, gerencia, area, q)
+    cur.execute(f"SELECT COUNT(*) AS n{where}", params)
+    total = int(cur.fetchone()["n"])
+    col = _EMP_SORT.get(sort, "nombre")
+    direction = "DESC" if str(order).lower() == "desc" else "ASC"
+    extra = " NULLS LAST" if col == "fecha_ingreso" else ""
+    cur.execute(
+        f"SELECT {EMP_COLS}{where} ORDER BY {col} {direction}{extra}, dni LIMIT %s OFFSET %s",
+        [*params, limit, offset],
+    )
+    items = [employee_from_row(r, with_photo=with_photos) for r in cur.fetchall()]
+    return items, total
 
 
 def get_employee(cur, user: dict, dni: str) -> dict | None:
