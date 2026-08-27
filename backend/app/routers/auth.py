@@ -1,9 +1,10 @@
 from pydantic import BaseModel
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from ..attendance_excel import warmup_excel_cache
 from ..auth import get_current_user, load_user_by_email, make_session_token
 from ..microsoft import poll_device_flow, start_device_flow
+from ..rate_limit import limiter
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -21,12 +22,14 @@ def auth_config():
 
 
 @router.post("/microsoft/start")
-def microsoft_start():
+@limiter.limit("10/minute")
+def microsoft_start(request: Request):
     return start_device_flow()
 
 
 @router.post("/microsoft/poll")
-def microsoft_poll(body: PollIn):
+@limiter.limit("60/minute")
+def microsoft_poll(request: Request, body: PollIn):
     result = poll_device_flow(body.flow_id)
     if result.get("status") == "pending":
         return {"status": "pending"}

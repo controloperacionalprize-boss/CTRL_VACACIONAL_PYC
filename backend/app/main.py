@@ -3,11 +3,14 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 
 from .attendance_excel import warmup_excel_cache
 from .config import get_settings
 from .db import check_connection, close_pool
 from .attendance_db import close_attendance_pool
+from .rate_limit import limiter
 from .routers.admin import router as admin_router
 # Módulo de Asistencia: en construcción, aún no listo para producción.
 # No se registra el router ni se corre su migración hasta retomarlo.
@@ -47,6 +50,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.include_router(auth_router)
 app.include_router(admin_router)
 app.include_router(catalog_router)
@@ -54,6 +59,16 @@ app.include_router(plan_router)
 app.include_router(dashboard_router)
 # app.include_router(asistencia_router)  # deshabilitado: módulo en construcción
 app.include_router(reports_router)
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
+    return response
 
 
 @app.api_route("/api/health", methods=["GET", "HEAD"])

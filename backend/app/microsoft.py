@@ -154,7 +154,9 @@ def poll_device_flow(flow_id: str) -> dict:
         try:
             id_claims = _verify_id_token(str(data["id_token"]))
         except Exception:
-            id_claims = _claims_from_jwt(data.get("id_token"))
+            # No confiar en claims de un id_token cuya firma no se pudo validar
+            # (evita spoofing de correo si la verificación falla por cualquier motivo).
+            id_claims = {}
     access_claims = _claims_from_jwt(data.get("access_token"))
     email = _email_from_claims(id_claims, access_claims)
     if not email and data.get("access_token"):
