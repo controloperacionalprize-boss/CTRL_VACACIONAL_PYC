@@ -12,7 +12,7 @@ from ..domain.calendar import (
     allowed_type,
     apply_consecutive_span,
     clear_dates_for_week,
-    count_year_days,
+    count_days_in_record,
     date_is_past,
     dates_for_dni_year,
     derecho_vigente,
@@ -102,6 +102,7 @@ def _ensure_saldo(
         programados_base=programados_base,
         derecho=derecho,
         es_adelanto=es_adelanto,
+        fecha_ingreso=emp.get("fecha_ingreso"),
     )
 
 
@@ -224,18 +225,26 @@ def get_plan(
             counts = {str(r["dni"]): int(r["n"]) for r in cur.fetchall()}
 
     rows = []
+    programados = pendientes = dias = 0
     for e in sorted(employees, key=lambda x: x["nombre"].casefold()):
         weeks = [int(targets.get((e["dni"], w), 0)) for w in range(1, TOTAL_SEMANAS + 1)]
-        n = counts.get(e["dni"], 0)
+        total = sum(weeks)
         tope, es_adelanto = _derecho_for_emp(e, today)
         rows.append({
             **e,
             "weeks": weeks,
-            "total_dias": sum(weeks),
-            "cambios": n,
+            "total_dias": total,
+            "cambios": counts.get(e["dni"], 0),
             "record_cumplido": not es_adelanto,
             "tope_dias": tope,
         })
+        if es_adelanto:
+            continue
+        dias += total
+        if total:
+            programados += 1
+        else:
+            pendientes += 1
 
     return {
         "year": year,
@@ -246,9 +255,9 @@ def get_plan(
         "workers": rows,
         "kpis": {
             "trabajadores": len(rows),
-            "programados": sum(1 for r in rows if r["total_dias"] > 0),
-            "pendientes": sum(1 for r in rows if r["total_dias"] == 0),
-            "dias": sum(r["total_dias"] for r in rows),
+            "programados": programados,
+            "pendientes": pendientes,
+            "dias": dias,
         },
     }
 
@@ -313,10 +322,15 @@ def patch_week(body: WeekPatch, user: dict = Depends(get_current_user)):
                 reject_if_start_in_past(body.start_date)
             except ValueError as exc:
                 raise _http_value_error(exc) from exc
-            # Saldo: al editar la semana se liberan sus días actuales antes de pedir N nuevos.
-            programados = count_year_days(daily_set, body.dni, body.year)
-            liberados = selected_count(daily_set, body.dni, week_dates(body.year, body.week))
-            programados_base = programados - liberados
+            ingreso = parse_iso_date(emp.get("fecha_ingreso"))
+            programados_base = count_days_in_record(
+                daily_set,
+                body.dni,
+                body.year,
+                body.start_date,
+                ingreso,
+                exclude=week_dates(body.year, body.week),
+            )
             derecho, es_adelanto = _derecho_for_emp(emp, today_lima())
             try:
                 _reject_if_no_saldo(
@@ -399,14 +413,17 @@ def patch_daily(body: DailyPatch, user: dict = Depends(get_current_user)):
                 continue
             daily_set.add(key_daily(body.dni, d))
         n = selected_count(daily_set, body.dni, week_dates(body.year, body.week))
-        programados = count_year_days(daily_set, body.dni, body.year)
-        programados_base = programados - n
+        ingreso = parse_iso_date(emp.get("fecha_ingreso"))
+        anchor = min(body.dates, default=week_dates(body.year, body.week)[0])
+        programados_base = count_days_in_record(
+            daily_set, body.dni, body.year, anchor, ingreso, exclude=week_dates(body.year, body.week)
+        )
         derecho, es_adelanto = _derecho_for_emp(emp, today)
         try:
             _reject_if_no_saldo(
                 emp,
                 pedidas=n,
-                programados_base=programados,
+                programados_base=programados_base,
                 derecho=derecho,
                 es_adelanto=es_adelanto,
             )
@@ -439,7 +456,8 @@ def consecutive(body: ConsecutiveIn, user: dict = Depends(get_current_user)):
     with get_conn() as conn:
         cur = conn.cursor()
         emp, daily_set, targets = _load_employee_plan(cur, user, body.dni, body.year)
-        programados = count_year_days(daily_set, body.dni, body.year)
+        ingreso = parse_iso_date(emp.get("fecha_ingreso"))
+        programados = count_days_in_record(daily_set, body.dni, body.year, body.start_date, ingreso)
         derecho, es_adelanto = _derecho_for_emp(emp, today_lima())
         try:
             _reject_if_no_saldo(
@@ -528,8 +546,14 @@ def period_move(body: PeriodMoveIn, user: dict = Depends(get_current_user)):
         if not found:
             raise HTTPException(400, "No se encontró ese período de vacaciones.")
         n = int(body.days) if body.days is not None else int(found["dias"])
-        programados = count_year_days(daily_set, body.dni, body.year)
-        programados_base = programados - int(found["dias"])
+        ingreso = parse_iso_date(emp.get("fecha_ingreso"))
+        old_dates = [
+            d for d in dates_for_dni_year(daily_set, body.dni, body.year)
+            if found["inicio"] <= d <= found["fin"]
+        ]
+        programados_base = count_days_in_record(
+            daily_set, body.dni, body.year, body.new_start, ingreso, exclude=old_dates
+        )
         derecho, es_adelanto = _derecho_for_emp(emp, today)
         try:
             _reject_if_no_saldo(

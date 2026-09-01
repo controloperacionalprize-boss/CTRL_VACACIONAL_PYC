@@ -8,13 +8,12 @@ from .photos import enrich_employee_photo
 
 EMP_COLS = (
     "dni, nombre, empresa, division, gerencia, area, jefatura, "
-    "cargo_actual, fecha_ingreso, tipo_personal, activo, vigencia, fecha_cese"
+    "cargo_actual, fecha_ingreso, tipo_personal, activo"
 )
 
 
 def employee_from_row(row, *, with_photo: bool = True) -> dict:
     fi = row["fecha_ingreso"]
-    fc = row.get("fecha_cese")
     emp = {
         "dni": str(row["dni"]),
         "nombre": row["nombre"],
@@ -27,8 +26,6 @@ def employee_from_row(row, *, with_photo: bool = True) -> dict:
         "fecha_ingreso": fi.isoformat() if isinstance(fi, date) else (str(fi) if fi else None),
         "tipo_personal": row["tipo_personal"],
         "activo": bool(row["activo"]),
-        "vigencia": str(row.get("vigencia") or "").strip(),
-        "fecha_cese": fc.isoformat() if isinstance(fc, date) else (str(fc) if fc else None),
     }
     return enrich_employee_photo(emp) if with_photo else emp
 

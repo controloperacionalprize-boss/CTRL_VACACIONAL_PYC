@@ -8,8 +8,32 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 import pandas as pd
 
-from .calendar import TOTAL_SEMANAS, format_antiguedad, parse_iso_date, vacation_record_for
+from .calendar import TOTAL_SEMANAS, es_apto, format_antiguedad, parse_iso_date, vacation_record_for
 from .plan import group_periods
+
+
+def programmed_dnis(targets, daily_set) -> set[str]:
+    dnis = {str(dni) for (dni, _week), dias in (targets or {}).items() if int(dias) > 0}
+    if daily_set:
+        dnis.update(item.split("|", 1)[0] for item in daily_set if "|" in item)
+    return dnis
+
+
+def filter_employees_for_export(
+    employees,
+    targets,
+    daily_set,
+    today: date | None = None,
+    *,
+    solo_aptos: bool = False,
+    con_vacaciones: bool = False,
+):
+    have = programmed_dnis(targets, daily_set) if con_vacaciones else None
+    return [
+        e
+        for e in employees
+        if (not solo_aptos or es_apto(e, today)) and (have is None or str(e["dni"]) in have)
+    ]
 
 
 def semaforo_fill(value):
@@ -49,60 +73,11 @@ def build_record(employees, dias_map: dict[str, list[date]], year: int, today: d
     return rows
 
 
-def export_excel(
-    employees,
-    daily_set,
-    targets,
-    year,
-    label_jefatura,
-    current_year,
-    current_week,
-    change_log,
-    usuario,
-    nombre_usuario,
-    historial=None,
-):
-    periods = group_periods(employees, daily_set, year)
-    weekly_rows = []
-    for w in sorted(employees, key=lambda x: str(x["nombre"]).casefold()):
-        dni = str(w["dni"])
-        weeks = {f"S{week}": int(targets.get((dni, week), 0)) for week in range(1, TOTAL_SEMANAS + 1)}
-        weekly_rows.append({
-            "NOMBRE": w["nombre"],
-            "DNI": dni,
-            "AREA": w["area"],
-            "TIPO": w["tipo_personal"],
-            "TOTAL": sum(weeks.values()),
-            **weeks,
-        })
+ALL_SHEETS = {"RESUMEN", "PLANIFICACION", "PERIODOS", "RECORD_VACACIONAL", "CAMBIOS"}
+RECORD_SHEETS = {"RECORD_VACACIONAL"}
 
-    summary = pd.DataFrame([{
-        "JEFATURA": label_jefatura,
-        "AÑO": year,
-        "TRABAJADORES": len(employees),
-        "PERSONAS_PROGRAMADAS": len({r["dni"] for r in periods}),
-        "DIAS_PROGRAMADOS": sum(int(r["dias"]) for r in periods),
-        "GENERADO": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "USUARIO_GENERADOR": usuario,
-        "NOMBRE_USUARIO": nombre_usuario,
-    }])
-    periods_df = pd.DataFrame(periods) if periods else pd.DataFrame(
-        columns=["dni", "nombre", "gerencia", "area", "jefatura", "tipo_personal", "fecha_inicio", "fecha_fin", "dias"]
-    )
-    weekly_df = pd.DataFrame(weekly_rows)
-    record_df = pd.DataFrame(historial) if historial else pd.DataFrame()
-    change_df = pd.DataFrame(change_log) if change_log else pd.DataFrame()
 
-    output = BytesIO()
-    with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        summary.to_excel(writer, sheet_name="RESUMEN", index=False)
-        weekly_df.to_excel(writer, sheet_name="PLANIFICACION", index=False)
-        periods_df.to_excel(writer, sheet_name="PERIODOS", index=False)
-        record_df.to_excel(writer, sheet_name="RECORD_VACACIONAL", index=False)
-        change_df.to_excel(writer, sheet_name="CAMBIOS", index=False)
-    output.seek(0)
-
-    wb = load_workbook(output)
+def _style_workbook(wb, *, year, current_year, current_week):
     thin = Side(style="thin", color="D0D5DD")
     border = Border(left=thin, right=thin, top=thin, bottom=thin)
     header_fill = PatternFill("solid", fgColor="0F172A")
@@ -116,7 +91,8 @@ def export_excel(
             cell.font = Font(color="FFFFFF", bold=True)
             cell.alignment = Alignment(horizontal="center", vertical="center")
             cell.border = border
-        ws.auto_filter.ref = ws.dimensions
+        if ws.max_row and ws.max_column:
+            ws.auto_filter.ref = ws.dimensions
         for column_cells in ws.columns:
             max_len = 0
             for cell in column_cells:
@@ -125,6 +101,9 @@ def export_excel(
                 cell.border = border
                 cell.alignment = Alignment(vertical="center")
             ws.column_dimensions[get_column_letter(column_cells[0].column)].width = min(max(max_len + 2, 10), 35)
+
+    if "PLANIFICACION" not in wb.sheetnames:
+        return
 
     ws = wb["PLANIFICACION"]
     for col_idx in range(1, ws.max_column + 1):
@@ -158,6 +137,77 @@ def export_excel(
         c1.border = border
     ws.freeze_panes = "F2"
 
+
+def export_excel(
+    employees,
+    daily_set,
+    targets,
+    year,
+    label_jefatura,
+    current_year,
+    current_week,
+    change_log,
+    usuario,
+    nombre_usuario,
+    historial=None,
+    sheets: set[str] | None = None,
+):
+    wanted = sheets or ALL_SHEETS
+    frames: list[tuple[str, pd.DataFrame]] = []
+
+    if "RESUMEN" in wanted or "PERIODOS" in wanted:
+        periods = group_periods(employees, daily_set, year)
+    else:
+        periods = []
+
+    if "RESUMEN" in wanted:
+        frames.append(("RESUMEN", pd.DataFrame([{
+            "JEFATURA": label_jefatura,
+            "AÑO": year,
+            "TRABAJADORES": len(employees),
+            "PERSONAS_PROGRAMADAS": len({r["dni"] for r in periods}),
+            "DIAS_PROGRAMADOS": sum(int(r["dias"]) for r in periods),
+            "GENERADO": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "USUARIO_GENERADOR": usuario,
+            "NOMBRE_USUARIO": nombre_usuario,
+        }])))
+
+    if "PLANIFICACION" in wanted:
+        weekly_rows = []
+        for w in sorted(employees, key=lambda x: str(x["nombre"]).casefold()):
+            dni = str(w["dni"])
+            weeks = {f"S{week}": int(targets.get((dni, week), 0)) for week in range(1, TOTAL_SEMANAS + 1)}
+            weekly_rows.append({
+                "NOMBRE": w["nombre"],
+                "DNI": dni,
+                "AREA": w["area"],
+                "TIPO": w["tipo_personal"],
+                "TOTAL": sum(weeks.values()),
+                **weeks,
+            })
+        frames.append(("PLANIFICACION", pd.DataFrame(weekly_rows)))
+
+    if "PERIODOS" in wanted:
+        periods_df = pd.DataFrame(periods) if periods else pd.DataFrame(
+            columns=["dni", "nombre", "gerencia", "area", "jefatura", "tipo_personal", "fecha_inicio", "fecha_fin", "dias"]
+        )
+        frames.append(("PERIODOS", periods_df))
+
+    if "RECORD_VACACIONAL" in wanted:
+        record_df = pd.DataFrame(historial) if historial else pd.DataFrame()
+        frames.append(("RECORD_VACACIONAL", record_df))
+
+    if "CAMBIOS" in wanted:
+        frames.append(("CAMBIOS", pd.DataFrame(change_log) if change_log else pd.DataFrame()))
+
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        for name, df in frames:
+            df.to_excel(writer, sheet_name=name, index=False)
+    output.seek(0)
+
+    wb = load_workbook(output)
+    _style_workbook(wb, year=year, current_year=current_year, current_week=current_week)
     output2 = BytesIO()
     wb.save(output2)
     output2.seek(0)

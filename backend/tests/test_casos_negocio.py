@@ -160,6 +160,72 @@ def test_validate_plan_marca_art8_y_saldo():
     assert any("Art. 8" in e for e in errors)
 
 
+def test_validate_plan_60_dias_dos_periodos_se_detalla():
+    """30+30 en el mismo año, cada uno en un período distinto: aviso con el desglose, no exceso."""
+    emp = [{
+        "dni": "1",
+        "nombre": "Jorge",
+        "tipo_personal": "ADMINISTRATIVO",
+        "fecha_ingreso": "2020-04-15",
+        "jefatura": "X",
+        "gerencia": "G",
+        "area": "A",
+    }]
+    daily = set()
+    for i in range(30):
+        daily.add(key_daily("1", date(2026, 1, 5) + timedelta(days=i)))
+    for i in range(30):
+        daily.add(key_daily("1", date(2026, 6, 1) + timedelta(days=i)))
+    errors, _w, groups = validate_plan(emp, {}, daily, 2026, today=_HOY)
+    by_code = {g["code"]: g for g in groups}
+    assert "saldo" not in by_code
+    assert "periodos" in by_code
+    msg = by_code["periodos"]["samples"][0]
+    assert "30 día(s) del período 2025-2026" in msg
+    assert "30 día(s) del período 2026-2027" in msg
+
+
+def test_validate_plan_dos_tramos_enero_se_detalla_no_60():
+    """Ingreso 1/ene: 30+30 en dos tramos se leen como dos períodos, no 60 contra tope 30."""
+    emp = [{
+        "dni": "1",
+        "nombre": "Ruiz",
+        "tipo_personal": "ADMINISTRATIVO",
+        "fecha_ingreso": "2020-01-01",
+        "jefatura": "X",
+        "gerencia": "G",
+        "area": "A",
+    }]
+    daily = set()
+    for i in range(30):
+        daily.add(key_daily("1", date(2026, 1, 5) + timedelta(days=i)))
+    for i in range(30):
+        daily.add(key_daily("1", date(2026, 8, 1) + timedelta(days=i)))
+    errors, _w, groups = validate_plan(emp, {}, daily, 2026, today=_HOY)
+    by_code = {g["code"]: g for g in groups}
+    assert "saldo" not in by_code
+    msg = by_code["periodos"]["samples"][0]
+    assert "60" not in msg
+    assert "período 2025-2026" in msg
+    assert "período 2026-2027" in msg
+
+
+def test_validate_plan_33_en_un_periodo_si_alerta():
+    emp = [{
+        "dni": "1",
+        "nombre": "Luis",
+        "tipo_personal": "ADMINISTRATIVO",
+        "fecha_ingreso": "2020-04-15",
+        "jefatura": "X",
+        "gerencia": "G",
+        "area": "A",
+    }]
+    daily = {key_daily("1", date(2026, 6, 1) + timedelta(days=i)) for i in range(33)}
+    errors, _w, groups = validate_plan(emp, {}, daily, 2026, today=_HOY)
+    assert "saldo" in {g["code"] for g in groups}
+    assert any("33" in e and "período 2026-2027" in e and "tope 30" in e for e in errors)
+
+
 def test_excel_periodos_usan_dias_corridos():
     emp = [{
         "dni": "1",

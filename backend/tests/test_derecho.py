@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 
@@ -47,6 +47,26 @@ def test_reject_if_exceeds_saldo():
     reject_if_exceeds_saldo(nombre="X", pedidas=10, programados_base=20)
     with pytest.raises(ValueError, match="solo le quedan"):
         reject_if_exceeds_saldo(nombre="Luis Vera", pedidas=15, programados_base=20)
+
+
+def test_ensure_dos_records_30_mas_30_ok():
+    dni = "1"
+    year = 2026
+    ingreso = date(2020, 4, 15)
+    daily: set[str] = set()
+    for i in range(30):
+        daily.add(key_daily(dni, date(year, 1, 5) + timedelta(days=i)))
+    for i in range(30):
+        daily.add(key_daily(dni, date(year, 6, 1) + timedelta(days=i)))
+    ensure_within_derecho(
+        daily,
+        dni,
+        year,
+        nombre="Jorge",
+        pedidas=30,
+        programados_base=0,
+        fecha_ingreso=ingreso,
+    )
 
 
 def test_span_luego_ensure_ok_en_limite():

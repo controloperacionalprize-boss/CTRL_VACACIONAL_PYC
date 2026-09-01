@@ -29,12 +29,16 @@ function scope(filters: ReturnType<typeof useApp>["filters"]) {
 }
 
 function kpisFrom(workers: Worker[]) {
-  return {
-    trabajadores: workers.length,
-    programados: workers.filter((w) => w.total_dias > 0).length,
-    pendientes: workers.filter((w) => w.total_dias === 0).length,
-    dias: workers.reduce((n, w) => n + w.total_dias, 0),
-  };
+  let programados = 0;
+  let pendientes = 0;
+  let dias = 0;
+  for (const w of workers) {
+    if (esAdelanto(w)) continue;
+    if (w.total_dias > 0) programados += 1;
+    else pendientes += 1;
+    dias += w.total_dias;
+  }
+  return { trabajadores: workers.length, programados, pendientes, dias };
 }
 
 function patchWorkerWeeks(workers: Worker[], dni: string, updates: Record<number, number>) {
@@ -719,9 +723,9 @@ export function PlanPage() {
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4 md:gap-4">
         <Kpi label="Trabajadores" value={plan.kpis.trabajadores} hint="Personas en este filtro" icon={<Users size={18} strokeWidth={1.75} />} />
-        <Kpi label="Programados" value={plan.kpis.programados} hint="Ya tienen vacaciones" icon={<UserCheck size={18} strokeWidth={1.75} />} />
-        <Kpi label="Sin programación" value={plan.kpis.pendientes} hint={`Aún sin días en ${plan.year}`} icon={<UserX size={18} strokeWidth={1.75} />} />
-        <Kpi label="Días programados" value={plan.kpis.dias} hint="Suma de todas las semanas" icon={<CalendarDays size={18} strokeWidth={1.75} />} />
+        <Kpi label="Programados" value={plan.kpis.programados} hint="Aptos con vacaciones" icon={<UserCheck size={18} strokeWidth={1.75} />} />
+        <Kpi label="Sin programación" value={plan.kpis.pendientes} hint={`Aptos aún sin días en ${plan.year}`} icon={<UserX size={18} strokeWidth={1.75} />} />
+        <Kpi label="Días programados" value={plan.kpis.dias} hint="Suma de aptos" icon={<CalendarDays size={18} strokeWidth={1.75} />} />
       </div>
 
       <div className="grid grid-cols-1 items-end gap-3 rounded-xl border border-border bg-card p-4 shadow-[var(--shadow-card)] sm:grid-cols-2 md:grid-cols-[2fr_1fr_1fr]">

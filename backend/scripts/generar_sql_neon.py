@@ -162,17 +162,15 @@ def build_sql(workers, cronograma, records, users) -> str:
                 w["CARGO_ACTUAL"],
                 fi,
                 w["TIPO_PERSONAL"],
-                vigencia,
-                fc,
                 is_worker_vigente(vigencia) and (fc is None or fc >= date.today()),
             )
         )
     batch_insert(
         lines,
         "employees",
-        "dni, nombre, empresa, division, gerencia, area, jefatura, cargo_actual, fecha_ingreso, tipo_personal, vigencia, fecha_cese, activo",
+        "dni, nombre, empresa, division, gerencia, area, jefatura, cargo_actual, fecha_ingreso, tipo_personal, activo",
         emp_rows,
-        "ON CONFLICT (dni) DO UPDATE SET nombre=EXCLUDED.nombre, empresa=EXCLUDED.empresa, division=EXCLUDED.division, gerencia=EXCLUDED.gerencia, area=EXCLUDED.area, jefatura=EXCLUDED.jefatura, cargo_actual=EXCLUDED.cargo_actual, fecha_ingreso=EXCLUDED.fecha_ingreso, tipo_personal=EXCLUDED.tipo_personal, vigencia=EXCLUDED.vigencia, fecha_cese=EXCLUDED.fecha_cese, activo=EXCLUDED.activo",
+        "ON CONFLICT (dni) DO UPDATE SET nombre=EXCLUDED.nombre, empresa=EXCLUDED.empresa, division=EXCLUDED.division, gerencia=EXCLUDED.gerencia, area=EXCLUDED.area, jefatura=EXCLUDED.jefatura, cargo_actual=EXCLUDED.cargo_actual, fecha_ingreso=EXCLUDED.fecha_ingreso, tipo_personal=EXCLUDED.tipo_personal, activo=EXCLUDED.activo",
     )
 
     crono_map: dict[tuple, tuple] = {}

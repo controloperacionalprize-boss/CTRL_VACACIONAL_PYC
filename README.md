@@ -64,7 +64,7 @@ Instalación vacía de tablas: ejecuta `backend/sql/schema.sql` en el SQL Editor
 | `MS_CLIENT_ID` | `d3590ed6-52b3-4102-aeff-aad2292ab01c` |
 | `MS_AUTHORITY` | `https://login.microsoftonline.com/common` |
 | `MS_SCOPE` | `openid profile email` |
-| `CORS_ORIGINS` | URL de Vercel (ej. `https://tu-app.vercel.app`) |
+| `CORS_ORIGINS` | `https://ctrl-vacacional-pyc.vercel.app` (sin barra final; puedes sumar localhost) |
 | `EXPOSE_DOCS` | `false` |
 | `ATTENDANCE_DATABASE_URL` | (opcional) BD de marcación Hik |
 | `ATTENDANCE_EXCEL_SHARE_URL` | link `:x:/s/...` del Excel HIK V2 |

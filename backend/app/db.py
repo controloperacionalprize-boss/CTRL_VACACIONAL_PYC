@@ -87,12 +87,6 @@ def get_conn(*, write: bool = True):
         pool.putconn(conn)
 
 
-def ensure_employee_vigencia(conn) -> None:
-    with conn.cursor() as cur:
-        cur.execute("ALTER TABLE employees ADD COLUMN IF NOT EXISTS vigencia TEXT NOT NULL DEFAULT ''")
-        cur.execute("ALTER TABLE employees ADD COLUMN IF NOT EXISTS fecha_cese DATE")
-
-
 def check_connection() -> bool:
     """Usado por /api/health para confirmar que la base de datos responde."""
     try:

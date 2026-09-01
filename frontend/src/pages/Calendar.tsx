@@ -1,8 +1,8 @@
 import { useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { CalendarCheck, CalendarClock, CalendarRange, Layers, PenLine } from "lucide-react";
-import { api, qs } from "../api";
+import { CalendarCheck, CalendarClock, CalendarRange, FileDown, Layers, PenLine } from "lucide-react";
+import { api, downloadFile, qs } from "../api";
 import { useApp } from "../state";
-import { Alert, EmptyState, Field, Input, PageHeader, Select, cn } from "../components/ui";
+import { Alert, Button, EmptyState, Field, Input, PageHeader, Select, cn } from "../components/ui";
 import { EmpAvatar } from "../components/EmpAvatar";
 
 type Emp = { dni: string; nombre: string; foto_url?: string | null };
@@ -198,6 +198,8 @@ export function CalendarPage() {
   const [year, setYear] = useState(filters.year);
   const [cal, setCal] = useState<Cal | null>(null);
   const [loadError, setLoadError] = useState("");
+  const [exportBusy, setExportBusy] = useState(false);
+  const [exportError, setExportError] = useState("");
   const boxRef = useRef<HTMLDivElement>(null);
   const params = useMemo(
     () => ({
@@ -293,6 +295,28 @@ export function CalendarPage() {
     setOpen(false);
   }
 
+  async function descargarAptos() {
+    setExportBusy(true);
+    setExportError("");
+    try {
+      await downloadFile(
+        `/api/export${qs({
+          year,
+          ...params,
+          label: "APTOS",
+          solo_aptos: true,
+          con_vacaciones: true,
+        })}`,
+        {},
+        `VACACIONES_${year}_APTOS.xlsx`
+      );
+    } catch (e) {
+      setExportError(e instanceof Error ? e.message : "No se pudo generar el Excel.");
+    } finally {
+      setExportBusy(false);
+    }
+  }
+
   const vac = useMemo(() => new Set(cal?.fechas || []), [cal?.fechas]);
   const asist = useMemo(() => new Set(cal?.asistencia || []), [cal?.asistencia]);
   const falta = useMemo(() => new Set(cal?.sin_marcacion || []), [cal?.sin_marcacion]);
@@ -371,7 +395,21 @@ export function CalendarPage() {
             ))}
           </Select>
         </Field>
+        <Button
+          variant="outline"
+          className="h-9 bg-card sm:mb-px"
+          disabled={exportBusy}
+          onClick={() => void descargarAptos()}
+        >
+          <FileDown size={16} strokeWidth={1.75} />
+          {exportBusy ? "Preparando Excel…" : "Excel aptos con vacaciones"}
+        </Button>
       </div>
+      {exportError ? (
+        <Alert tone="error" title="No se pudo descargar">
+          {exportError}
+        </Alert>
+      ) : null}
 
       {loadError ? (
         <Alert tone="error" title="No se pudo cargar">

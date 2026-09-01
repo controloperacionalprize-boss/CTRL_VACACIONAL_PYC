@@ -11,8 +11,6 @@ CREATE TABLE IF NOT EXISTS employees (
     cargo_actual TEXT NOT NULL DEFAULT '',
     fecha_ingreso DATE,
     tipo_personal TEXT NOT NULL DEFAULT 'ADMINISTRATIVO',
-    vigencia TEXT NOT NULL DEFAULT '',
-    fecha_cese DATE,
     activo BOOLEAN NOT NULL DEFAULT TRUE,
     actualizado TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

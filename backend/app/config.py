@@ -20,7 +20,12 @@ class Settings(BaseSettings):
     ms_client_id: str = "d3590ed6-52b3-4102-aeff-aad2292ab01c"
     ms_authority: str = "https://login.microsoftonline.com/common"
     ms_scope: str = "openid profile email"
-    cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
+    cors_origins: str = (
+        "http://localhost:5173,http://127.0.0.1:5173,"
+        "https://ctrl-vacacional-pyc.vercel.app"
+    )
+    # Previews de Vercel (ctrl-vacacional-pyc-git-….vercel.app) además de la lista fija.
+    cors_origin_regex: str = r"https://ctrl-vacacional-pyc[\w.-]*\.vercel\.app"
     expose_docs: bool = False
 
     attendance_database_url: str = ""

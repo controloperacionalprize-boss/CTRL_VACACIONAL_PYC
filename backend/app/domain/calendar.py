@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from datetime import date, datetime, timedelta
 from typing import Iterable
 from zoneinfo import ZoneInfo
@@ -106,15 +107,110 @@ def selected_count(daily_set: set[str], dni: str, dates: Iterable[date]) -> int:
 
 def count_year_days(daily_set: set[str], dni: str, year: int) -> int:
     """Días de vacaciones del trabajador en el año ISO del plan."""
-    prefix = f"{dni}|"
-    n = 0
-    for item in daily_set:
-        if not item.startswith(prefix):
-            continue
-        _, d = parse_daily_key(item)
-        if d.isocalendar()[0] == year:
-            n += 1
-    return n
+    return len(dates_for_dni_year(daily_set, dni, year))
+
+
+def record_period_start(fecha_ingreso: date | None, d: date) -> date | None:
+    """Inicio del récord (PERIODO) que contiene el día d. Sin ingreso: un solo bloque."""
+    if not isinstance(fecha_ingreso, date):
+        return None
+    if d < fecha_ingreso:
+        return fecha_ingreso
+    years = d.year - fecha_ingreso.year
+    start = add_years(fecha_ingreso, years)
+    if start > d:
+        start = add_years(fecha_ingreso, years - 1)
+    return start
+
+
+def period_year_label(start: date | None, year: int) -> str:
+    """Etiqueta de período tipo 2025-2026."""
+    y = start.year if start else year
+    return f"{y}-{y + 1}"
+
+
+def format_period_breakdown(buckets: dict[date | None, int], year: int) -> str:
+    parts = [
+        f"{n} día(s) del período {period_year_label(start, year)}"
+        for start, n in sorted(((k, v) for k, v in buckets.items() if v), key=lambda kv: kv[0] or date.min)
+    ]
+    if len(parts) <= 2:
+        return " y ".join(parts)
+    return f"{', '.join(parts[:-1])} y {parts[-1]}"
+
+
+def _anniversary_in_year(fecha_ingreso: date, year: int) -> date:
+    delta = year - fecha_ingreso.year
+    curr = add_years(fecha_ingreso, delta)
+    if curr.year != year:
+        curr = add_years(fecha_ingreso, delta - (1 if curr.year > year else -1))
+    return curr
+
+
+def split_tramos_into_periods(tramos: list[dict], fecha_ingreso: date | None, year: int) -> dict[date | None, int] | None:
+    """2+ tramos: el primero al período anterior, el resto al del año."""
+    if len(tramos) < 2:
+        return None
+    ordered = sorted(tramos, key=lambda p: p["inicio"])
+    if not isinstance(fecha_ingreso, date):
+        return {None: sum(int(p["dias"]) for p in ordered)}
+    curr = _anniversary_in_year(fecha_ingreso, year)
+    return {add_years(curr, -1): int(ordered[0]["dias"]), curr: sum(int(p["dias"]) for p in ordered[1:])}
+
+
+def days_by_record(dates: Iterable[date], fecha_ingreso: date | None) -> dict[date | None, int]:
+    buckets: dict[date | None, int] = defaultdict(int)
+    for d in dates:
+        buckets[record_period_start(fecha_ingreso, d)] += 1
+    return {k: v for k, v in buckets.items() if v}
+
+
+def count_days_in_record(
+    daily_set: set[str],
+    dni: str,
+    year: int,
+    anchor: date,
+    fecha_ingreso: date | None,
+    exclude: Iterable[date] | None = None,
+) -> int:
+    skip = set(exclude or ())
+    start = record_period_start(fecha_ingreso, anchor)
+    fechas = (d for d in dates_for_dni_year(daily_set, dni, year) if d not in skip)
+    return days_by_record(fechas, fecha_ingreso).get(start, 0)
+
+
+def _over_cap(buckets: dict[date | None, int], tope: int) -> list[tuple[date | None, int]]:
+    return [(s, n) for s, n in buckets.items() if n > tope]
+
+
+def period_saldo_issue(
+    nombre: str,
+    fechas: list[date],
+    tramos: list[dict],
+    ingreso: date | None,
+    tope: int,
+    year: int,
+) -> tuple[str, str] | None:
+    """('saldo'|'periodos', mensaje) o None si no hay aviso."""
+    buckets = days_by_record(fechas, ingreso)
+    over = _over_cap(buckets, tope)
+    if len(over) == 1 and len(buckets) == 1 and len(tramos) >= 2 and all(int(p["dias"]) <= tope for p in tramos):
+        split = split_tramos_into_periods(tramos, ingreso, year)
+        if split:
+            buckets = {s: n for s, n in split.items() if n}
+            over = _over_cap(buckets, tope)
+    if over:
+        if len(buckets) == 1:
+            start, n = over[0]
+            return "saldo", f"{nombre}: {n} día(s) del período {period_year_label(start, year)} (tope {tope})."
+        extras = "; ".join(
+            f"el período {period_year_label(s, year)} tiene {n} (tope {tope})"
+            for s, n in sorted(over, key=lambda kv: kv[0] or date.min)
+        )
+        return "saldo", f"{nombre}: {format_period_breakdown(buckets, year)}. {extras[0].upper() + extras[1:]}."
+    if len(buckets) >= 2:
+        return "periodos", f"{nombre}: {format_period_breakdown(buckets, year)}."
+    return None
 
 
 def mensaje_sin_saldo(
@@ -169,9 +265,11 @@ def ensure_within_derecho(
     programados_base: int,
     derecho: int = DERECHO_ANUAL,
     es_adelanto: bool = False,
+    fecha_ingreso: date | str | None = None,
 ) -> None:
-    """Falla si tras el cambio el año supera el derecho (30, o el acumulado si es adelanto)."""
-    if count_year_days(daily_set, dni, year) > derecho:
+    """Falla si algún récord (perido->periodo) supera el tope; no el total del año calendario."""
+    ingreso = parse_iso_date(fecha_ingreso)
+    if any(n > derecho for n in days_by_record(dates_for_dni_year(daily_set, dni, year), ingreso).values()):
         raise ValueError(mensaje_sin_saldo(nombre, pedidas, programados_base, derecho, es_adelanto=es_adelanto))
 
 
@@ -210,6 +308,10 @@ def record_cumplido(fecha_ingreso: date | None, ref_date: date | None = None) ->
         return True
     ref_date = ref_date or today_lima()
     return ref_date >= fecha_record_cumplido(fecha_ingreso)
+
+
+def es_apto(emp: dict, today: date | None = None) -> bool:
+    return record_cumplido(parse_iso_date(emp.get("fecha_ingreso")), today)
 
 
 def dias_acumulados_adelanto(fecha_ingreso: date | None, ref_date: date | None = None) -> int:
@@ -456,11 +558,16 @@ def period_estado(ini: date, fin: date, today: date) -> str:
 
 
 def vacation_periods(
-    daily_set: set[str], dni: str, year: int, today: date | None = None
+    daily_set: set[str],
+    dni: str,
+    year: int,
+    today: date | None = None,
+    *,
+    dates: list[date] | None = None,
 ) -> list[dict]:
     """Tramos corridos del trabajador en el año ISO del plan."""
     today = today or today_lima()
-    dates = dates_for_dni_year(daily_set, dni, year)
+    dates = dates if dates is not None else dates_for_dni_year(daily_set, dni, year)
     periods: list[dict] = []
     for ini, fin in group_consecutive_dates(dates):
         n = sum(1 for d in dates if ini <= d <= fin)

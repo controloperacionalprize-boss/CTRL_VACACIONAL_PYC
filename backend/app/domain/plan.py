@@ -9,7 +9,7 @@ from .calendar import (
     TOTAL_SEMANAS,
     allowed_type,
     art8_fraccion_ok,
-    count_year_days,
+    dates_for_dni_year,
     derecho_vigente,
     group_consecutive_dates,
     is_weekend,
@@ -17,10 +17,12 @@ from .calendar import (
     now_lima,
     parse_daily_key,
     parse_iso_date,
+    period_saldo_issue,
     selected_count,
     today_lima,
     vacation_periods,
     week_dates,
+    week_is_locked,
 )
 
 
@@ -124,33 +126,37 @@ GROUP_META = {
         "title": "Fraccionamiento fuera del Art. 8",
         "hint": "Hace falta un bloque de 15 días corridos, o dos de al menos 7 y 8. El resto puede ser desde 1 día.",
     },
+    "periodos": {
+        "title": "Dos períodos en el mismo año",
+        "hint": "Hay días de un período (p. ej. 2025-2026) y del siguiente (2026-2027). El tope es 30 en cada uno.",
+    },
     "saldo": {
         "title": "Días por encima del derecho / adelanto",
-        "hint": "El total del año no puede superar 30 días, o lo acumulado si aún no cumple el récord.",
+        "hint": "El tope es 30 días por período (2025-2026, 2026-2027, …), o lo acumulado si aún no cumple el año.",
     },
 }
 
 
 def validate_plan(employees, targets, daily_set, year, today: date | None = None):
-    from .calendar import week_is_locked
-
     today = today or today_lima()
-    warnings = []
     issues: list[dict] = []
 
     for w in employees:
         dni = str(w["dni"])
         ingreso = parse_iso_date(w.get("fecha_ingreso"))
-        programados = count_year_days(daily_set, dni, year)
-        tope = derecho_vigente(ingreso, today)
-        if programados > tope:
-            issues.append({
-                "code": "saldo",
-                "sample": (
-                    f"{w['nombre']}: tiene {programados} día(s) programados y el tope vigente es {tope}."
-                ),
-            })
-        sizes = [p["dias"] for p in vacation_periods(daily_set, dni, year, today)]
+        fechas = dates_for_dni_year(daily_set, dni, year)
+        tramos = vacation_periods(daily_set, dni, year, today, dates=fechas)
+        aviso = period_saldo_issue(
+            w["nombre"],
+            fechas,
+            tramos,
+            ingreso,
+            derecho_vigente(ingreso, today),
+            year,
+        )
+        if aviso:
+            issues.append({"code": aviso[0], "sample": aviso[1]})
+        sizes = [p["dias"] for p in tramos]
         if sizes and not art8_fraccion_ok(sizes):
             issues.append({
                 "code": "art8",
@@ -166,43 +172,32 @@ def validate_plan(employees, targets, daily_set, year, today: date | None = None
             target = int(targets.get((dni, week), 0))
             dates = week_dates(year, week)
             selected = selected_count(daily_set, dni, dates)
-            weekend_n = sum(key_daily(dni, d) in daily_set for d in dates if is_weekend(d))
+            if modo == "HABIL" and any(key_daily(dni, d) in daily_set and is_weekend(d) for d in dates):
+                continue
             label = f"{w['nombre']} — semana {week}"
-
             if target < 0 or target > MAX_DIAS:
                 issues.append({"code": "range", "sample": f"{label}: aparecen {target} días (el máximo es 7)."})
                 continue
-
-            # Oficina con sáb/dom: viene del archivo original; no es algo a corregir aquí.
-            if modo == "HABIL" and weekend_n > 0:
-                continue
-
             if 0 < target < 7 and selected != target:
-                issues.append(
-                    {
-                        "code": "mismatch",
-                        "sample": f"{label}: en planificación hay {target} día(s) y en el detalle hay {selected}.",
-                    }
-                )
+                issues.append({
+                    "code": "mismatch",
+                    "sample": f"{label}: en planificación hay {target} día(s) y en el detalle hay {selected}.",
+                })
             elif target == 7:
                 expected = 7 if modo == "CALENDARIO" else 5
                 if selected != expected:
-                    issues.append(
-                        {
-                            "code": "mismatch",
-                            "sample": f"{label}: una semana completa son {expected} día(s) y están marcados {selected}.",
-                        }
-                    )
+                    issues.append({
+                        "code": "mismatch",
+                        "sample": f"{label}: una semana completa son {expected} día(s) y están marcados {selected}.",
+                    })
 
     groups = []
     for code, meta in GROUP_META.items():
         samples = [i["sample"] for i in issues if i["code"] == code]
-        if not samples:
-            continue
-        groups.append({**meta, "code": code, "count": len(samples), "samples": samples})
+        if samples:
+            groups.append({**meta, "code": code, "count": len(samples), "samples": samples})
 
-    errors = [i["sample"] for i in issues]
-
+    warnings = []
     total = len(employees)
     if total and daily_set:
         emp_dnis = {str(w["dni"]) for w in employees}
@@ -221,7 +216,7 @@ def validate_plan(employees, targets, daily_set, year, today: date | None = None
                 warnings.append(
                     f"El {d.strftime('%d/%m/%Y')} hay {absent} de {total} personas de vacaciones ({pct:.0%}). Conviene revisar cobertura."
                 )
-    return errors, warnings, groups
+    return [i["sample"] for i in issues], warnings, groups
 
 
 def group_periods(employees, daily_set: set[str], year: int):
@@ -229,9 +224,7 @@ def group_periods(employees, daily_set: set[str], year: int):
     emp = {str(e["dni"]): e for e in employees}
     for item in daily_set:
         dni, d = parse_daily_key(item)
-        if d.year != year and d.isocalendar()[0] != year:
-            pass
-        if dni not in emp:
+        if dni not in emp or (d.isocalendar()[0] != year and d.year != year):
             continue
         by_dni[dni].append(d)
 

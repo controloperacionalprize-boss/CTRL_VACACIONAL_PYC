@@ -27,7 +27,7 @@ services:
       - key: MS_SCOPE
         value: openid profile email
       - key: CORS_ORIGINS
-        sync: false
+        value: "https://ctrl-vacacional-pyc.vercel.app,http://localhost:5173,http://127.0.0.1:5173"
       - key: EXPOSE_DOCS
         value: "false"
       - key: ATTENDANCE_DATABASE_URL

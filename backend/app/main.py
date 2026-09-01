@@ -22,7 +22,7 @@ from .routers.plan import router as plan_router
 from .routers.reports import router as reports_router
 
 # Cambia con cada fix de deploy para verificar en /api/version qué código está vivo.
-DEPLOY_MARK = "docs-word-escenarios-v1"
+DEPLOY_MARK = "sin-col-vigencia"
 
 
 @asynccontextmanager
@@ -46,6 +46,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origin_list,
+    allow_origin_regex=settings.cors_origin_regex or None,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
