@@ -1,5 +1,6 @@
-from pathlib import Path
+import re
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -22,10 +23,14 @@ class Settings(BaseSettings):
     ms_scope: str = "openid profile email"
     cors_origins: str = (
         "http://localhost:5173,http://127.0.0.1:5173,"
-        "https://ctrl-vacacional-pyc.vercel.app"
+        "https://ctrl-vacacional-pyc.vercel.app,"
+        "https://ctrl-vacacional-pyc-controloperacionalprize-boss-projects.vercel.app"
     )
-    # Previews de Vercel (ctrl-vacacional-pyc-git-….vercel.app) además de la lista fija.
-    cors_origin_regex: str = r"https://ctrl-vacacional-pyc[\w.-]*\.vercel\.app"
+    # Producción, git y previews de Vercel:
+    # https://ctrl-vacacional-pyc.vercel.app
+    # https://ctrl-vacacional-pyc-git-….vercel.app
+    # https://ctrl-vacacional-<hash>-<equipo>.vercel.app
+    cors_origin_regex: str = r"https://ctrl-vacacional[\w.-]*\.vercel\.app$"
     expose_docs: bool = False
 
     attendance_database_url: str = ""
@@ -67,9 +72,22 @@ class Settings(BaseSettings):
                 parts.append(o)
         return ",".join(parts)
 
+    @field_validator("cors_origin_regex")
+    @classmethod
+    def cors_origin_regex_ok(cls, v: str) -> str:
+        return (v or "").strip().strip("\"'")
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [o for o in self.cors_origins.split(",") if o]
+
+    def allows_cors_origin(self, origin: str) -> bool:
+        """Misma regla que Starlette CORSMiddleware (.match desde el inicio)."""
+        if origin in self.cors_origin_list:
+            return True
+        if not self.cors_origin_regex:
+            return False
+        return re.compile(self.cors_origin_regex).match(origin) is not None
 
 
 @lru_cache

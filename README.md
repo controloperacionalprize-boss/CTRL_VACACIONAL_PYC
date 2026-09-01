@@ -64,7 +64,8 @@ Instalación vacía de tablas: ejecuta `backend/sql/schema.sql` en el SQL Editor
 | `MS_CLIENT_ID` | `d3590ed6-52b3-4102-aeff-aad2292ab01c` |
 | `MS_AUTHORITY` | `https://login.microsoftonline.com/common` |
 | `MS_SCOPE` | `openid profile email` |
-| `CORS_ORIGINS` | `https://ctrl-vacacional-pyc.vercel.app` (sin barra final; puedes sumar localhost) |
+| `CORS_ORIGINS` | URLs exactas de Vercel (sin barra final), p. ej. `https://ctrl-vacacional-pyc.vercel.app` |
+| `CORS_ORIGIN_REGEX` | `https://ctrl-vacacional[\w.-]*\.vercel.app$` (cubre previews `…-hash-equipo.vercel.app`) |
 | `EXPOSE_DOCS` | `false` |
 | `ATTENDANCE_DATABASE_URL` | (opcional) BD de marcación Hik |
 | `ATTENDANCE_EXCEL_SHARE_URL` | link `:x:/s/...` del Excel HIK V2 |
@@ -95,10 +96,10 @@ Instalación vacía de tablas: ejecuta `backend/sql/schema.sql` en el SQL Editor
 
 ### 3) Cruzar URLs (importante)
 
-1. En **Render**, actualiza `CORS_ORIGINS` con la URL exacta de Vercel (puedes dejar también localhost si quieres):
-   `https://tu-app.vercel.app,http://localhost:5173`
-2. Redeploy en Render (o “Manual Deploy”) para aplicar CORS.
-3. Si cambiaste el dominio de Vercel, actualiza también `VITE_API_URL` y vuelve a desplegar el front.
+1. En **Render**, `CORS_ORIGINS` debe incluir la URL **exacta** de producción de Vercel (sin `/` al final).
+2. Deja `CORS_ORIGIN_REGEX` para los deploys de preview (`https://ctrl-vacacional-<hash>-….vercel.app`).
+3. Redeploy en Render (o “Manual Deploy”) para aplicar CORS. Comprueba `/api/version` → `deploy: cors-vercel-previews`.
+4. Si cambiaste el dominio de Vercel, actualiza también `VITE_API_URL` y vuelve a desplegar el front.
 
 ### Checklist rápido
 
