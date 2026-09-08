@@ -29,7 +29,7 @@ def employees(
     q: str | None = Query(default=None, max_length=80),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=0, ge=0, le=100),
-    photos: bool = Query(default=True),
+    photos: bool = Query(default=False),
     sort: str = Query(default="nombre"),
     order: str = Query(default="asc"),
 ):

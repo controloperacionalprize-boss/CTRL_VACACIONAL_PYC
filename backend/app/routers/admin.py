@@ -1,16 +1,15 @@
 from collections import defaultdict
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, model_validator
 
 from ..auth import require_admin
 from ..db import get_conn
 from ..photos import coverage_report, picture_index, resolve_foto_url
+from ..org_scope import ROLES, division_for_area, resolve_division
 from ..services import list_employees
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
-
-ROLES = {"ADMIN", "USER"}
 
 
 def _iniciales(nombre: str) -> str:
@@ -35,8 +34,9 @@ class UserIn(BaseModel):
     usuario: str = ""
     nombre_usuario: str = ""
     nombre_persona: str
-    gerencia: str
-    rol: str = "USER"
+    gerencia: str = ""
+    area: str = ""
+    rol: str = "GERENTE"
     activo: bool = True
 
     @field_validator("correo")
@@ -47,26 +47,31 @@ class UserIn(BaseModel):
             raise ValueError("Indica un correo válido.")
         return v
 
-    @field_validator("nombre_persona", "gerencia")
-    @classmethod
-    def required_text(cls, v: str) -> str:
-        v = (v or "").strip()
-        if not v:
-            raise ValueError("Este dato es obligatorio.")
-        return v
-
     @field_validator("rol")
     @classmethod
     def role_ok(cls, v: str) -> str:
-        v = (v or "USER").strip().upper()
+        v = (v or "GERENTE").strip().upper()
         if v not in ROLES:
-            raise ValueError("El rol debe ser USER o ADMIN.")
+            raise ValueError("El rol debe ser ADMIN, GERENTE o JEFE.")
         return v
 
-    @field_validator("usuario", "nombre_usuario")
+    @field_validator("usuario", "nombre_usuario", "nombre_persona", "gerencia", "area")
     @classmethod
     def trim(cls, v: str) -> str:
         return (v or "").strip()
+
+    @model_validator(mode="after")
+    def scope_ok(self):
+        if not self.nombre_persona:
+            raise ValueError("El nombre es obligatorio.")
+        if self.rol == "JEFE":
+            if not self.area:
+                raise ValueError("El jefe debe tener un área.")
+            if not self.gerencia:
+                self.gerencia = division_for_area(self.area) or resolve_division(self.area) or ""
+        elif self.rol != "ADMIN" and not self.gerencia:
+            raise ValueError("El gerente debe tener una división.")
+        return self
 
 
 class UserPatch(BaseModel):
@@ -74,6 +79,7 @@ class UserPatch(BaseModel):
     nombre_usuario: str | None = None
     nombre_persona: str | None = None
     gerencia: str | None = None
+    area: str | None = None
     rol: str | None = None
     activo: bool | None = None
 
@@ -84,11 +90,26 @@ class UserPatch(BaseModel):
             return v
         v = v.strip().upper()
         if v not in ROLES:
-            raise ValueError("El rol debe ser USER o ADMIN.")
+            raise ValueError("El rol debe ser ADMIN, GERENTE o JEFE.")
         return v
 
+    @field_validator("usuario", "nombre_usuario", "nombre_persona", "gerencia", "area")
+    @classmethod
+    def trim_opt(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        return v.strip()
 
-USER_PATCH_COLS = ("usuario", "nombre_usuario", "nombre_persona", "gerencia", "rol", "activo")
+
+USER_PATCH_COLS = (
+    "usuario",
+    "nombre_usuario",
+    "nombre_persona",
+    "gerencia",
+    "area",
+    "rol",
+    "activo",
+)
 
 
 def _admin_count(cur) -> int:
@@ -97,15 +118,22 @@ def _admin_count(cur) -> int:
 
 
 def _user_row(r) -> dict:
+    gerencia = r["gerencia"] or ""
+    area = (r["area"] if "area" in r else "") or ""
+    rol = str(r["rol"]).upper()
     return {
         "correo": r["correo"],
         "usuario": r["usuario"] or "",
         "nombre_usuario": r["nombre_usuario"] or "",
         "nombre_persona": r["nombre_persona"] or "",
-        "gerencia": r["gerencia"] or "",
-        "rol": str(r["rol"]).upper(),
+        "gerencia": gerencia,
+        "area": area,
+        "division": resolve_division(gerencia, area) or gerencia,
+        "rol": rol,
         "activo": bool(r["activo"]),
-        "is_admin": str(r["rol"]).upper() == "ADMIN",
+        "is_admin": rol == "ADMIN",
+        "is_gerente": rol in ("GERENTE", "USER"),
+        "is_jefe": rol == "JEFE",
     }
 
 
@@ -114,13 +142,21 @@ def list_users(user: dict = Depends(require_admin)):
     with get_conn(write=False) as conn:
         cur = conn.cursor()
         cur.execute(
-            """SELECT correo, usuario, nombre_usuario, nombre_persona, gerencia, rol, activo
+            """SELECT correo, usuario, nombre_usuario, nombre_persona, gerencia, area, rol, activo
                FROM users ORDER BY activo DESC, nombre_persona, correo"""
         )
         items = [_user_row(r) for r in cur.fetchall()]
         cur.execute("SELECT DISTINCT gerencia FROM employees WHERE gerencia <> '' ORDER BY gerencia")
         gerencias = [r["gerencia"] for r in cur.fetchall()]
-    return {"items": items, "gerencias": gerencias}
+        cur.execute("SELECT DISTINCT division FROM employees WHERE division <> '' ORDER BY division")
+        divisiones = [r["division"] for r in cur.fetchall()]
+        cur.execute("SELECT DISTINCT area FROM employees WHERE area <> '' ORDER BY area")
+        areas = [r["area"] for r in cur.fetchall()]
+    seen = []
+    for name in [*divisiones, *gerencias]:
+        if name and name not in seen:
+            seen.append(name)
+    return {"items": items, "gerencias": seen or gerencias, "areas": areas}
 
 
 @router.post("/users")
@@ -134,14 +170,15 @@ def create_user(body: UserIn, user: dict = Depends(require_admin)):
             raise HTTPException(409, "Ese correo ya está registrado.")
         cur.execute(
             """INSERT INTO users
-               (correo, usuario, nombre_usuario, nombre_persona, gerencia, rol, activo)
-               VALUES (%s, %s, %s, %s, %s, %s, %s)""",
+               (correo, usuario, nombre_usuario, nombre_persona, gerencia, area, rol, activo)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
             (
                 body.correo,
                 usuario.lower(),
                 nombre_usuario,
                 body.nombre_persona,
                 body.gerencia,
+                body.area,
                 body.rol,
                 body.activo,
             ),
@@ -160,23 +197,12 @@ def update_user(correo: str, body: UserPatch, user: dict = Depends(require_admin
             raise HTTPException(400, "No puedes desactivar tu propia cuenta.")
         if data.get("rol") and data["rol"] != "ADMIN":
             raise HTTPException(400, "No puedes quitarte el rol de administrador.")
-    fields = []
-    params: list = []
-    for key in USER_PATCH_COLS:
-        if key in data and data[key] is not None:
-            val = data[key]
-            if key == "usuario":
-                val = str(val).strip().lower()
-            elif isinstance(val, str):
-                val = val.strip()
-            fields.append(f"{key} = %s")
-            params.append(val)
-    if not fields:
-        raise HTTPException(400, "No hay cambios.")
-    params.append(correo)
     with get_conn() as conn:
         cur = conn.cursor()
-        cur.execute("SELECT rol, activo FROM users WHERE correo = %s", (correo,))
+        cur.execute(
+            "SELECT rol, activo, gerencia, area FROM users WHERE correo = %s",
+            (correo,),
+        )
         current = cur.fetchone()
         if not current:
             raise HTTPException(404, "Ese usuario no existe.")
@@ -185,6 +211,35 @@ def update_user(correo: str, body: UserPatch, user: dict = Depends(require_admin
         new_activo = bool(data["activo"]) if "activo" in data else bool(current["activo"])
         if was_admin and not (new_rol == "ADMIN" and new_activo) and _admin_count(cur) <= 1:
             raise HTTPException(400, "Debe quedar al menos un administrador activo.")
+        if any(k in data for k in ("rol", "gerencia", "area")):
+            area = data["area"] if "area" in data else (current["area"] or "")
+            gerencia = data["gerencia"] if "gerencia" in data else (current["gerencia"] or "")
+            if new_rol == "JEFE":
+                if not str(area or "").strip():
+                    raise HTTPException(400, "El jefe debe tener un área.")
+                data["area"] = area
+                data["gerencia"] = division_for_area(area) or resolve_division(area) or gerencia
+            elif new_rol != "ADMIN":
+                if not str(gerencia or "").strip():
+                    raise HTTPException(400, "El gerente debe tener una división.")
+                data["gerencia"] = gerencia
+                if "rol" in data:
+                    data["area"] = ""
+        fields = []
+        params: list = []
+        for key in USER_PATCH_COLS:
+            if key not in data or data[key] is None:
+                continue
+            val = data[key]
+            if key == "usuario":
+                val = str(val).strip().lower()
+            elif isinstance(val, str):
+                val = val.strip()
+            fields.append(f"{key} = %s")
+            params.append(val)
+        if not fields:
+            raise HTTPException(400, "No hay cambios.")
+        params.append(correo)
         cur.execute(f"UPDATE users SET {', '.join(fields)}, actualizado = NOW() WHERE correo = %s", params)
     return {"ok": True}
 

@@ -4,6 +4,7 @@ import {
   Calendar,
   CalendarRange,
   FileSpreadsheet,
+  Inbox,
   LayoutDashboard,
   LogOut,
   Menu,
@@ -43,6 +44,7 @@ function Multi({
 
 const NAV = [
   { to: "/", end: true, label: "Planificación", short: "Plan", Icon: CalendarRange },
+  { to: "/validaciones", end: false, label: "Bandeja", short: "Bandeja", Icon: Inbox },
   { to: "/dashboard", end: false, label: "Dashboard", short: "Dash", Icon: LayoutDashboard },
   { to: "/record-vacacional", end: false, label: "Récord vacacional", short: "Récord", Icon: Calendar },
   { to: "/exportar", end: false, label: "Exportar", short: "Excel", Icon: FileSpreadsheet },
@@ -56,6 +58,9 @@ function FiltersBlock({
   compact?: boolean;
 }) {
   const { user, filters, setFilters, options } = useApp();
+  const isAdmin = Boolean(user?.is_admin);
+  const isJefe = Boolean(user?.is_jefe) && !isAdmin;
+  const isGerente = Boolean(user?.is_gerente) && !isAdmin && !isJefe;
   return (
     <div className={cn("flex flex-col gap-2.5", compact ? "" : "px-4 pt-1 pb-3")}>
       <Field label="AÑO">
@@ -66,12 +71,16 @@ function FiltersBlock({
         </Select>
       </Field>
       <Multi label="EMPRESA" values={options.empresas} selected={filters.empresas} onChange={(empresas) => setFilters({ ...filters, empresas })} />
-      {user?.is_admin ? (
-        <Multi label="GERENCIA" values={options.gerencias} selected={filters.gerencias} onChange={(gerencias) => setFilters({ ...filters, gerencias })} />
-      ) : (
-        <p className="text-[11px] text-muted-foreground">Gerencia: {user?.gerencia}</p>
-      )}
-      <Multi label="ÁREA" values={options.areas} selected={filters.areas} onChange={(areas) => setFilters({ ...filters, areas })} />
+      {isAdmin ? (
+        <Multi label="DIVISIÓN" values={options.gerencias} selected={filters.gerencias} onChange={(gerencias) => setFilters({ ...filters, gerencias })} />
+      ) : isGerente ? (
+        <p className="text-[11px] text-muted-foreground">División: {user?.division || user?.gerencia || "—"}</p>
+      ) : isJefe ? (
+        <p className="text-[11px] text-muted-foreground">Área: {user?.area || "—"}</p>
+      ) : null}
+      {isAdmin ? (
+        <Multi label="ÁREA" values={options.areas} selected={filters.areas} onChange={(areas) => setFilters({ ...filters, areas })} />
+      ) : null}
     </div>
   );
 }
@@ -163,7 +172,9 @@ export function Shell() {
           <EmpAvatar nombre={display} fotoUrl={user?.foto_url} className="h-8 w-8 text-[11px]" />
           <div className="min-w-0">
             <p className="truncate text-xs font-semibold">{display}</p>
-            <p className="text-[11px] text-muted-foreground">{user?.is_admin ? "Admin · GTH" : user?.rol}</p>
+            <p className="text-[11px] text-muted-foreground">
+              {user?.is_admin ? "Admin · GTH" : user?.is_jefe ? "Jefe" : user?.is_gerente ? "Gerente" : user?.rol}
+            </p>
           </div>
         </div>
       </aside>
@@ -176,7 +187,11 @@ export function Shell() {
           </div>
           <p className="hidden min-w-0 truncate text-[13px] text-muted-foreground md:block">
             {display} · {user?.correo} · {user?.rol}
-            {user?.is_admin ? " · todas las gerencias" : ` · ${user?.gerencia}`}
+            {user?.is_admin
+              ? " · todas las divisiones"
+              : user?.is_jefe
+                ? ` · ${user?.area || "sin área"}`
+                : ` · ${user?.division || user?.gerencia}`}
           </p>
           <div className="flex shrink-0 items-center gap-1.5">
             <Button

@@ -56,6 +56,7 @@ function pctLabel(n: number, total: number) {
 export function DashboardPage() {
   const { filters } = useApp();
   const [data, setData] = useState<Dash | null>(null);
+  const [loadError, setLoadError] = useState("");
   const params = useMemo(
     () => ({
       year: filters.year,
@@ -67,9 +68,28 @@ export function DashboardPage() {
   );
 
   useEffect(() => {
-    api<Dash>(`/api/dashboard${qs(params)}`).then(setData);
+    let cancelled = false;
+    setLoadError("");
+    setData(null);
+    api<Dash>(`/api/dashboard${qs(params)}`)
+      .then((d) => {
+        if (!cancelled) setData(d);
+      })
+      .catch((e) => {
+        if (!cancelled) setLoadError(e instanceof Error ? e.message : "No se pudo cargar el dashboard.");
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [params]);
 
+  if (loadError) {
+    return (
+      <Alert tone="error" title="No se pudo cargar el dashboard">
+        {loadError}
+      </Alert>
+    );
+  }
   if (!data) return <p className="text-sm text-muted-foreground">Cargando el dashboard…</p>;
 
   const totalDias = Math.max(1, data.dias_totales);

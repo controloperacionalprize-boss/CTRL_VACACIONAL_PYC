@@ -242,6 +242,28 @@ def saldo_disponible(programados: int, derecho: int = DERECHO_ANUAL) -> int:
     return max(0, derecho - max(0, programados))
 
 
+def mensaje_goce_incompleto(nombre: str, programados: int, derecho: int, *, es_adelanto: bool = False) -> str:
+    quien = (nombre or "").strip() or "Esta persona"
+    etiqueta = "acumulado de adelanto" if es_adelanto else "derecho anual"
+    if programados <= 0:
+        return f"{quien} debe programar los {derecho} días completos ({etiqueta})."
+    return (
+        f"{quien} debe programar los {derecho} días completos ({etiqueta}); ahora tiene {programados}. "
+        "Puedes completarlos en varios períodos."
+    )
+
+
+def reject_if_plan_not_completo(
+    *,
+    nombre: str,
+    programados: int,
+    derecho: int = DERECHO_ANUAL,
+    es_adelanto: bool = False,
+) -> None:
+    if int(programados) != int(derecho):
+        raise ValueError(mensaje_goce_incompleto(nombre, int(programados), int(derecho), es_adelanto=es_adelanto))
+
+
 def reject_if_exceeds_saldo(
     *,
     nombre: str,
@@ -369,6 +391,39 @@ def vacation_record_for(
         "dias_pendientes": max(0, DERECHO_ANUAL - programados),
         "record_cumplido": today >= cumple,
     }
+
+
+def fecha_vencimiento_de(
+    fecha_ingreso: date | None, view_year: int, today: date | None = None
+) -> date | None:
+    """Último día en que se puede gozar el récord de ese año de plan."""
+    rec = vacation_record_for(fecha_ingreso, [], view_year, today)
+    limite = rec.get("fecha_vencimiento")
+    return limite if isinstance(limite, date) else None
+
+
+def reject_if_despues_de_vencimiento(
+    fechas: list[date],
+    fecha_ingreso: date | None,
+    view_year: int,
+    *,
+    nombre: str = "",
+    today: date | None = None,
+) -> None:
+    """Pepe récord mar-2026/mar-2027: goce hasta mar-2028; abril-2028 no se programa."""
+    limite = fecha_vencimiento_de(fecha_ingreso, view_year, today)
+    if not limite or not fechas:
+        return
+    # max() y no fechas[-1]/sorted(): solo importa la fecha más tardía del lote,
+    # sin asumir que `fechas` venga ordenada (p. ej. filas de un Excel).
+    last = max(fechas)
+    if last <= limite:
+        return
+    quien = f"{nombre}: " if nombre else ""
+    raise ValueError(
+        f"{quien}el récord se goza como máximo hasta el {limite.strftime('%d/%m/%Y')}. "
+        f"No se puede programar hasta el {last.strftime('%d/%m/%Y')}."
+    )
 
 
 def clear_dates_for_week(
@@ -505,6 +560,8 @@ def apply_consecutive_span(
     year: int,
     clear_week: int | None = None,
     today: date | None = None,
+    fecha_ingreso: date | None = None,
+    nombre: str = "",
 ) -> tuple[list[date], list[tuple[int, int, int]]]:
     """Marca N días seguidos y actualiza el número de cada semana tocada."""
     today = today or today_lima()
@@ -512,6 +569,9 @@ def apply_consecutive_span(
     if clear_week is not None:
         clear_dates_for_week(daily_set, dni, year, clear_week, today=today, keep_past=True)
     fechas = compute_consecutive_dates(tipo, start_date, number_of_days, dni)
+    reject_if_despues_de_vencimiento(
+        fechas, fecha_ingreso, year, nombre=nombre, today=today
+    )
     reject_if_fuera_de_anio_iso(fechas, year)
     in_year = [d for d in fechas if d.isocalendar()[0] == year]
     weeks = sorted({d.isocalendar()[1] for d in in_year})
@@ -644,11 +704,17 @@ def refresh_week_targets(
     return deltas
 
 
-def clear_period_dates(daily_set: set[str], dni: str, ini: date, fin: date) -> None:
+def date_range(ini: date, fin: date) -> Iterable[date]:
+    """Fechas día a día desde ini hasta fin, ambas inclusive."""
     d = ini
     while d <= fin:
-        daily_set.discard(key_daily(dni, d))
+        yield d
         d += timedelta(days=1)
+
+
+def clear_period_dates(daily_set: set[str], dni: str, ini: date, fin: date) -> None:
+    for d in date_range(ini, fin):
+        daily_set.discard(key_daily(dni, d))
 
 
 def move_vacation_period(
@@ -661,6 +727,8 @@ def move_vacation_period(
     new_start: date,
     days: int | None = None,
     today: date | None = None,
+    fecha_ingreso: date | None = None,
+    nombre: str = "",
 ) -> tuple[list[date], list[tuple[int, int, int]], dict]:
     """Reprograma un tramo futuro (mismos días salvo que se pida otro número). No descuenta dos veces."""
     today = today or today_lima()
@@ -682,7 +750,16 @@ def move_vacation_period(
     })
     clear_period_dates(daily_set, dni, found["inicio"], found["fin"])
     nuevas, deltas_new = apply_consecutive_span(
-        daily_set, targets, dni, tipo, new_start, n, year, today=today
+        daily_set,
+        targets,
+        dni,
+        tipo,
+        new_start,
+        n,
+        year,
+        today=today,
+        fecha_ingreso=fecha_ingreso,
+        nombre=nombre,
     )
     extra_weeks = [wk for wk in old_weeks if wk not in {d[0] for d in deltas_new}]
     deltas_old = refresh_week_targets(daily_set, targets, dni, year, extra_weeks)

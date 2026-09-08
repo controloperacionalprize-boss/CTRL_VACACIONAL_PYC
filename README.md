@@ -65,7 +65,7 @@ Instalación vacía de tablas: ejecuta `backend/sql/schema.sql` en el SQL Editor
 | `MS_AUTHORITY` | `https://login.microsoftonline.com/common` |
 | `MS_SCOPE` | `openid profile email` |
 | `CORS_ORIGINS` | URLs exactas de Vercel (sin barra final), p. ej. `https://ctrl-vacacional-pyc.vercel.app` |
-| `CORS_ORIGIN_REGEX` | `https://ctrl-vacacional[\w.-]*\.vercel.app$` (cubre previews `…-hash-equipo.vercel.app`) |
+| `CORS_ORIGIN_REGEX` | `https://ctrl-vacacional[\w.-]*controloperacionalprize[\w.-]*\.vercel.app$` (solo previews del team Prize) |
 | `EXPOSE_DOCS` | `false` |
 | `ATTENDANCE_DATABASE_URL` | (opcional) BD de marcación Hik |
 | `ATTENDANCE_EXCEL_SHARE_URL` | link `:x:/s/...` del Excel HIK V2 |
@@ -97,8 +97,9 @@ Instalación vacía de tablas: ejecuta `backend/sql/schema.sql` en el SQL Editor
 ### 3) Cruzar URLs (importante)
 
 1. En **Render**, `CORS_ORIGINS` debe incluir la URL **exacta** de producción de Vercel (sin `/` al final).
-2. Deja `CORS_ORIGIN_REGEX` para los deploys de preview (`https://ctrl-vacacional-<hash>-….vercel.app`).
-3. Redeploy en Render (o “Manual Deploy”) para aplicar CORS. Comprueba `/api/version` → `deploy: cors-vercel-previews`.
+2. Deja `CORS_ORIGIN_REGEX` para previews del team (`…controloperacionalprize…vercel.app`). No uses un regex que acepte cualquier `ctrl-vacacional-*.vercel.app`.
+3. Redeploy en Render (o “Manual Deploy”) para aplicar CORS. Comprueba `/api/version` → `deploy: hardening-cors-upload`.
+   Si `CORS_ORIGIN_REGEX` ya está en el dashboard de Render, actualízalo al valor de `render.yaml` (solo team Prize).
 4. Si cambiaste el dominio de Vercel, actualiza también `VITE_API_URL` y vuelve a desplegar el front.
 
 ### Checklist rápido

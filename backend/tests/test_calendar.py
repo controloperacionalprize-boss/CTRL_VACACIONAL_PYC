@@ -89,3 +89,66 @@ def test_apply_rechaza_inicio_pasado():
             2026,
             today=date(2026, 8, 21),
         )
+
+
+def test_pepe_no_programa_despues_del_vencimiento():
+    """Récord mar-2026/mar-2027: goce hasta mar-2028; abril-2028 se rechaza."""
+    from app.domain.calendar import fecha_vencimiento_de, reject_if_despues_de_vencimiento
+
+    ingreso = date(2026, 3, 15)
+    limite = fecha_vencimiento_de(ingreso, 2026, today=date(2026, 9, 7))
+    assert limite == date(2028, 3, 14)
+    reject_if_despues_de_vencimiento(
+        [date(2028, 3, 14)], ingreso, 2026, today=date(2026, 9, 7)
+    )
+    with pytest.raises(ValueError, match="14/03/2028"):
+        reject_if_despues_de_vencimiento(
+            [date(2028, 4, 1)], ingreso, 2026, nombre="Pepe", today=date(2026, 9, 7)
+        )
+    daily, targets = set(), {}
+    with pytest.raises(ValueError, match="14/03/2028"):
+        apply_consecutive_span(
+            daily,
+            targets,
+            "1",
+            "ADMINISTRATIVO",
+            date(2028, 4, 1),
+            5,
+            2026,
+            today=date(2026, 9, 7),
+            fecha_ingreso=ingreso,
+            nombre="Pepe",
+        )
+
+
+def test_mover_periodo_no_puede_pasar_del_vencimiento():
+    """El mismo límite de vencimiento del récord aplica al mover un período (no solo al crearlo)."""
+    from app.domain.calendar import move_vacation_period
+
+    ingreso = date(2026, 3, 15)
+    daily, targets = set(), {}
+    apply_consecutive_span(
+        daily,
+        targets,
+        "1",
+        "ADMINISTRATIVO",
+        date(2026, 9, 10),
+        5,
+        2026,
+        today=date(2026, 9, 7),
+        fecha_ingreso=ingreso,
+        nombre="Pepe",
+    )
+    with pytest.raises(ValueError, match="14/03/2028"):
+        move_vacation_period(
+            daily,
+            targets,
+            "1",
+            "ADMINISTRATIVO",
+            2026,
+            date(2026, 9, 10),
+            date(2028, 4, 1),
+            today=date(2026, 9, 7),
+            fecha_ingreso=ingreso,
+            nombre="Pepe",
+        )

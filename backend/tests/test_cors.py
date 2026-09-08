@@ -17,6 +17,14 @@ def _settings(**kw) -> Settings:
     return Settings(
         database_url="postgresql://u:p@localhost/db",
         jwt_secret="test-jwt-secret-ok",
+        cors_origins=(
+            "http://localhost:5173,http://127.0.0.1:5173,"
+            "https://ctrl-vacacional-pyc.vercel.app,"
+            "https://ctrl-vacacional-pyc-controloperacionalprize-boss-projects.vercel.app"
+        ),
+        cors_origin_regex=(
+            r"https://ctrl-vacacional[\w.-]*controloperacionalprize[\w.-]*\.vercel\.app$"
+        ),
         **kw,
     )
 
@@ -54,7 +62,8 @@ def test_regex_cubre_preview_de_equipo_vercel():
     assert s.allows_cors_origin(PROD)
     assert s.allows_cors_origin(TEAM_PROD)
     assert s.allows_cors_origin("http://localhost:5173")
-    assert not s.allows_cors_origin("https://otro-proyecto.vercel.app")
+    assert not s.allows_cors_origin("https://ctrl-vacacional-phishing.vercel.app")
+    assert not s.allows_cors_origin("https://ctrl-vacacional-evil-otro-equipo.vercel.app")
     assert not s.allows_cors_origin("https://ctrl-vacacional-pyc.vercel.app.evil.com")
 
 
@@ -64,6 +73,12 @@ def test_preflight_preview_vercel_devuelve_allow_origin():
     assert res.status_code in (200, 204)
     assert res.headers.get("access-control-allow-origin") == PREVIEW
     assert res.headers.get("access-control-allow-credentials") == "true"
+
+
+def test_preflight_phishing_vercel_sin_allow_origin():
+    client = _cors_app(_settings())
+    res = _preflight(client, "https://ctrl-vacacional-phishing.vercel.app")
+    assert res.headers.get("access-control-allow-origin") in (None, "")
 
 
 def test_preflight_origen_ajeno_sin_allow_origin():

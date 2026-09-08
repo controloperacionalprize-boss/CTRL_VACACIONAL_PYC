@@ -129,6 +129,7 @@ def build_sql(workers, cronograma, records, users) -> str:
                 u["NOMBRE_USUARIO"],
                 u["NOMBRE_PERSONA"],
                 u["GERENCIA"],
+                u["AREA"] if "AREA" in u else "",
                 str(u["ROL"]).upper(),
                 is_user_active(u["ACTIVO"]),
             )
@@ -136,9 +137,9 @@ def build_sql(workers, cronograma, records, users) -> str:
     batch_insert(
         lines,
         "users",
-        "correo, usuario, nombre_usuario, nombre_persona, gerencia, rol, activo",
+        "correo, usuario, nombre_usuario, nombre_persona, gerencia, area, rol, activo",
         user_rows,
-        "ON CONFLICT (correo) DO UPDATE SET usuario=EXCLUDED.usuario, nombre_usuario=EXCLUDED.nombre_usuario, nombre_persona=EXCLUDED.nombre_persona, gerencia=EXCLUDED.gerencia, rol=EXCLUDED.rol, activo=EXCLUDED.activo",
+        "ON CONFLICT (correo) DO UPDATE SET usuario=EXCLUDED.usuario, nombre_usuario=EXCLUDED.nombre_usuario, nombre_persona=EXCLUDED.nombre_persona, gerencia=EXCLUDED.gerencia, area=EXCLUDED.area, rol=EXCLUDED.rol, activo=EXCLUDED.activo",
     )
 
     emp_rows = []

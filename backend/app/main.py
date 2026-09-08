@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+import logging
 
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -8,7 +9,7 @@ from slowapi.errors import RateLimitExceeded
 
 from .attendance_excel import warmup_excel_cache
 from .config import get_settings
-from .db import check_connection, close_pool
+from .db import check_connection, close_pool, ensure_scope_columns
 from .attendance_db import close_attendance_pool
 from .rate_limit import limiter
 from .routers.admin import router as admin_router
@@ -20,13 +21,21 @@ from .routers.catalog import router as catalog_router
 from .routers.dashboard import router as dashboard_router
 from .routers.plan import router as plan_router
 from .routers.reports import router as reports_router
+from .routers.workflow import router as workflow_router
 
 # Cambia con cada fix de deploy para verificar en /api/version qué código está vivo.
-DEPLOY_MARK = "cors-vercel-previews"
+DEPLOY_MARK = "plan-sparse-weeks"
+
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    try:
+        ensure_scope_columns()
+    except Exception:
+        logger.exception("No se pudieron crear columnas/tablas de alcance (plan_flujo / users.area).")
     warmup_excel_cache()
     yield
     close_pool()
@@ -59,6 +68,7 @@ app.include_router(auth_router)
 app.include_router(admin_router)
 app.include_router(catalog_router)
 app.include_router(plan_router)
+app.include_router(workflow_router)
 app.include_router(dashboard_router)
 # app.include_router(asistencia_router)  # deshabilitado: módulo en construcción
 app.include_router(reports_router)

@@ -1,6 +1,6 @@
 import { memo, useEffect, useRef, useState } from "react";
 import { SEM_COLORS } from "../../lib/semaforo";
-import { MAX_VAC_DAYS } from "../../lib/vacaciones";
+import { flujoEstadoLabel, MAX_VAC_DAYS, type Rol } from "../../lib/vacaciones";
 import { EmpAvatar } from "../../components/EmpAvatar";
 import { cn } from "../../components/ui";
 import type { Worker } from "./types";
@@ -8,6 +8,43 @@ import type { Worker } from "./types";
 function cellColor(val: number) {
   if (!val) return "transparent";
   return SEM_COLORS[Math.min(val, 7)] || SEM_COLORS[7];
+}
+
+export function FlujoBadge({ w, rol }: { w: Worker; rol?: Rol }) {
+  if (w.apto === false) {
+    return (
+      <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+        No cumple el año
+      </span>
+    );
+  }
+  const estado = w.flujo_estado || "BORRADOR";
+  if (estado === "BORRADOR") return null;
+  const tone =
+    estado === "OBSERVADO"
+      ? "bg-warning-muted text-warning"
+      : estado === "RECEPCIONADO" || estado === "VALIDADO"
+        ? "bg-success-muted text-success"
+        : estado === "ENVIADO"
+          ? "bg-[var(--primary-soft)] text-primary"
+          : "bg-muted text-muted-foreground";
+  return (
+    <span className={cn("rounded px-1.5 py-0.5 text-[10px] font-medium", tone)} title={w.flujo_observacion || undefined}>
+      {flujoEstadoLabel(estado, rol)}
+    </span>
+  );
+}
+
+export function lockReasonFor(w: Worker) {
+  if (w.apto === false) return "No cumple el año de servicio. Solo se programan trabajadores aptos.";
+  if (w.can_edit === false) {
+    const estado = w.flujo_estado || "";
+    if (estado === "ENVIADO") return "Enviado al gerente: ya no se puede editar.";
+    if (estado === "VALIDADO") return "Validado por el gerente: ya no se puede editar.";
+    if (estado === "RECEPCIONADO") return "Recepcionado: el plan queda bloqueado.";
+    return "No puedes editar estos días.";
+  }
+  return "";
 }
 
 /** Edición local; confirma solo con Enter o al salir de la celda. */
@@ -90,17 +127,19 @@ export const WorkerRow = memo(function WorkerRow({
   onDays,
   gridLocked,
   savingWeek,
+  lockReason,
 }: {
   w: Worker;
   lockedWeeks: boolean[];
   onDays: (w: Worker, week: number, days: number) => void;
   gridLocked?: boolean;
   savingWeek?: number | null;
+  lockReason?: string;
 }) {
   return (
     <tr className="hover:bg-muted/60" style={{ contentVisibility: "auto", containIntrinsicSize: "auto 32px" }}>
       <td className="sticky left-0 z-10 whitespace-nowrap border-b border-border bg-card px-2.5 py-1 font-semibold">
-        <span className="inline-flex max-w-[220px] items-center gap-2">
+        <span className="inline-flex max-w-[280px] items-center gap-2">
           <EmpAvatar nombre={w.nombre} fotoUrl={w.foto_url} className="h-7 w-7 text-[9px]" />
           <span className="truncate">{w.nombre}</span>
         </span>
@@ -117,11 +156,7 @@ export const WorkerRow = memo(function WorkerRow({
           return (
             <td
               key={week}
-              title={
-                gridLocked && !locked
-                  ? "Aún no cumple el año. Usa Adelanto vacacional o Modificar período."
-                  : undefined
-              }
+              title={gridLocked && !locked ? lockReason || lockReasonFor(w) : undefined}
               className="h-8 w-9 border-b border-border p-0 text-center text-[11px] font-medium text-muted-foreground"
               style={{ background: bg }}
             >
@@ -153,6 +188,7 @@ export const WorkerCard = memo(function WorkerCard({
   onDays,
   gridLocked,
   savingWeek,
+  lockReason,
 }: {
   w: Worker;
   weekWindow: number[];
@@ -160,6 +196,7 @@ export const WorkerCard = memo(function WorkerCard({
   onDays: (w: Worker, week: number, days: number) => void;
   gridLocked?: boolean;
   savingWeek?: number | null;
+  lockReason?: string;
 }) {
   return (
     <article className="rounded-xl border border-border bg-card p-3.5 shadow-[var(--shadow-card)]">
@@ -193,11 +230,7 @@ export const WorkerCard = memo(function WorkerCard({
               <span className="text-[9px] font-semibold text-muted-foreground">S{week}</span>
               {locked || gridLocked ? (
                 <span
-                  title={
-                    gridLocked && !locked
-                      ? "Aún no cumple el año. Usa Adelanto vacacional o Modificar período."
-                      : undefined
-                  }
+                  title={gridLocked && !locked ? lockReason || lockReasonFor(w) : undefined}
                   className="flex h-9 w-full items-center justify-center rounded-md border border-border text-[11px] font-medium text-muted-foreground"
                   style={{ background: bg }}
                 >

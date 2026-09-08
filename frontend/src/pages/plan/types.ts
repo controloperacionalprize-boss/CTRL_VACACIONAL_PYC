@@ -8,7 +8,7 @@ export type Worker = {
   cargo_actual: string;
   fecha_ingreso: string | null;
   tipo_personal: string;
-  weeks: number[];
+  weeks: number[]; // en pantalla siempre 53; el API manda solo las semanas con días
   total_dias: number;
   cambios: number;
   foto_url?: string | null;
@@ -16,6 +16,13 @@ export type Worker = {
   record_cumplido?: boolean;
   /** Tope real programable: 30 si ya cumplió el récord, o lo acumulado (adelanto) si no. */
   tope_dias?: number;
+  flujo_estado?: string;
+  flujo_observacion?: string;
+  apto?: boolean;
+  can_edit?: boolean;
+  cumple_record?: string | null;
+  record_vacacional?: string | null;
+  fecha_vencimiento?: string | null;
 };
 
 export type VacPeriod = {

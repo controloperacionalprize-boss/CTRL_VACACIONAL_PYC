@@ -88,6 +88,17 @@ def persist_employee(cur, year: int, emp: dict, daily_set: set[str], targets: di
         )
 
 
+def sparse_weeks(targets: dict, dni: str, n: int = TOTAL_SEMANAS) -> dict[str, int]:
+    """Solo semanas con días > 0. El front rellena el resto con ceros."""
+    key = str(dni)
+    out: dict[str, int] = {}
+    for week in range(1, n + 1):
+        days = int(targets.get((key, week), 0) or 0)
+        if days:
+            out[str(week)] = days
+    return out
+
+
 def log_change(cur, *, jefatura, year, dni, nombre, tipo, old_week, old_days, new_week, new_days, user):
     cur.execute(
         """INSERT INTO change_log
@@ -161,7 +172,7 @@ def validate_plan(employees, targets, daily_set, year, today: date | None = None
             issues.append({
                 "code": "art8",
                 "sample": (
-                    f"{w['nombre']}: tramos {sizes} no cumplen el Art. 8 "
+                    f"{w['nombre']}: períodos {sizes} no cumplen el Art. 8 "
                     f"(15 corridos, o 7+8; el resto desde 1 día)."
                 ),
             })

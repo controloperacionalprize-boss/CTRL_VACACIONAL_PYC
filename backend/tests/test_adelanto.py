@@ -66,3 +66,11 @@ def test_ensure_within_derecho_usa_tope_dinamico():
         ensure_within_derecho(
             daily, dni, year, nombre="X", pedidas=18, programados_base=0, derecho=17, es_adelanto=True
         )
+
+
+def test_envio_exige_goce_completo_no_el_tramo():
+    from app.domain.calendar import reject_if_plan_not_completo
+
+    reject_if_plan_not_completo(nombre="Ana", programados=30, derecho=30)
+    with pytest.raises(ValueError, match="ahora tiene 10"):
+        reject_if_plan_not_completo(nombre="Ana", programados=10, derecho=30)

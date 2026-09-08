@@ -1,12 +1,13 @@
 from datetime import date
 import re
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 
 from ..attendance import fetch_merged_attendance
 from ..auth import get_current_user
 from ..db import get_conn
+from ..rate_limit import limiter
 from ..domain.calendar import es_apto, today_lima
 from ..domain.employee_calendar import employee_calendar_payload
 from ..domain.export import RECORD_SHEETS, build_record, export_excel, programmed_dnis
@@ -46,7 +47,9 @@ def calendar_emp(
 
 
 @router.get("/export")
+@limiter.limit("8/minute")
 def export_plan(
+    request: Request,
     year: int,
     user: dict = Depends(get_current_user),
     empresa: list[str] | None = Query(default=None),
@@ -84,7 +87,11 @@ def export_plan(
             log_rows = [dict(r) for r in cur.fetchall()]
         dias_map: dict[str, list[date]] = {d: [] for d in dnis}
         if dnis:
-            cur.execute("SELECT dni, fecha FROM daily_plan WHERE dni = ANY(%s)", (dnis,))
+            cur.execute(
+                """SELECT dni, fecha FROM daily_plan
+                   WHERE dni = ANY(%s) AND anio BETWEEN %s AND %s""",
+                (dnis, year - 1, year),
+            )
             for r in cur.fetchall():
                 f = r["fecha"]
                 if isinstance(f, date):

@@ -4,6 +4,16 @@ from datetime import date
 
 from .domain.calendar import reconcile_targets_with_daily
 from .domain.plan import load_plan_for_year
+from .funcionarios_org import load_funcionarios_org
+from .org_scope import (
+    sql_fold_expr,
+    dnis_from_maestro,
+    effective_role,
+    employee_sql_scope,
+    fold_list,
+    gerente_match_values,
+    resolve_division,
+)
 from .photos import enrich_employee_photo
 
 EMP_COLS = (
@@ -30,21 +40,45 @@ def employee_from_row(row, *, with_photo: bool = True) -> dict:
     return enrich_employee_photo(emp) if with_photo else emp
 
 
+def _maestro_dnis(user: dict) -> list[str]:
+    if effective_role(user) == "ADMIN":
+        return []
+    try:
+        return dnis_from_maestro(user, load_funcionarios_org())
+    except Exception:
+        return []
+
+
 def _scope_sql(user: dict, empresa, gerencia, area, q: str | None = None) -> tuple[str, list]:
     sql = " FROM employees WHERE activo = TRUE"
     params: list = []
-    if not user.get("is_admin"):
-        sql += " AND lower(gerencia) = lower(%s)"
-        params.append(user.get("gerencia") or "")
+    role = effective_role(user)
+    if role != "ADMIN":
+        frag, extra = employee_sql_scope(user, extra_dnis=_maestro_dnis(user))
+        sql += frag
+        params.extend(extra)
+        gerencia = None
+        if role == "JEFE":
+            area = None
     if empresa and "TODAS" not in empresa:
         sql += " AND lower(empresa) = ANY(%s)"
         params.append([x.lower() for x in empresa])
-    if user.get("is_admin") and gerencia and "TODAS" not in gerencia:
-        sql += " AND lower(gerencia) = ANY(%s)"
-        params.append([x.lower() for x in gerencia])
+    if role == "ADMIN" and gerencia and "TODAS" not in gerencia:
+        aliases: list[str] = []
+        for g in gerencia:
+            aliases.extend(gerente_match_values({"gerencia": g}))
+        aliases = sorted(set(aliases))
+        if aliases:
+            sql += (
+                f" AND ({sql_fold_expr('gerencia')} = ANY(%s) OR {sql_fold_expr('division')} = ANY(%s)"
+                f" OR {sql_fold_expr('area')} = ANY(%s))"
+            )
+            params.extend([aliases, aliases, aliases])
     if area and "TODAS" not in area:
-        sql += " AND lower(area) = ANY(%s)"
-        params.append([x.lower() for x in area])
+        folded = fold_list(*area)
+        if folded:
+            sql += f" AND {sql_fold_expr('area')} = ANY(%s)"
+            params.append(folded)
     needle = (q or "").strip()
     if needle:
         like = f"%{needle}%"
@@ -108,9 +142,9 @@ def list_employees_page(
 def get_employee(cur, user: dict, dni: str) -> dict | None:
     sql = f"SELECT {EMP_COLS} FROM employees WHERE activo = TRUE AND dni = %s"
     params: list = [str(dni)]
-    if not user.get("is_admin"):
-        sql += " AND lower(gerencia) = lower(%s)"
-        params.append(user.get("gerencia") or "")
+    frag, extra = employee_sql_scope(user, extra_dnis=_maestro_dnis(user))
+    sql += frag
+    params.extend(extra)
     cur.execute(sql, params)
     row = cur.fetchone()
     return employee_from_row(row) if row else None
@@ -127,16 +161,27 @@ def _distinct_values(cur, user: dict, column: str, empresa=None, gerencia=None, 
 
 
 def filter_options(cur, user: dict, empresa=None, gerencia=None, area=None):
+    role = effective_role(user)
     empresas = _distinct_values(cur, user, "empresa", empresa, gerencia, area)
     gerencias = _distinct_values(cur, user, "gerencia", empresa, gerencia, area)
-    if not user.get("is_admin"):
-        gerencias = [g for g in gerencias if g == user.get("gerencia")] or [user.get("gerencia")]
     areas = _distinct_values(cur, user, "area", empresa, gerencia, area)
+    division = resolve_division(user.get("gerencia"), user.get("area")) or (
+        user.get("gerencia") or ""
+    )
+    if role == "GERENTE":
+        gerencias = [g for g in gerencias if g] or ([division] if division else [])
+    elif role == "JEFE":
+        gerencias = [g for g in gerencias if g] or ([division] if division else [])
+        own_area = (user.get("area") or "").strip()
+        areas = [a for a in areas if a] or ([own_area] if own_area else [])
     return {
         "empresas": empresas,
         "gerencias": gerencias,
         "areas": areas,
-        "is_admin": user.get("is_admin"),
+        "is_admin": role == "ADMIN",
+        "is_gerente": role == "GERENTE",
+        "is_jefe": role == "JEFE",
+        "rol": role,
     }
 
 

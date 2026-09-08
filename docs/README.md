@@ -1,13 +1,22 @@
 # Documentación — Planificador de Vacaciones
 
-Herramienta digital de **Personas y Cultura · Prize / Aquanqa** para armar el calendario de vacaciones del personal y dejarlo visible, ordenado y descargable desde un solo lugar.
+Herramienta digital de **Personas y Cultura · Prize / Aquanqa** para planificar, supervisar y centralizar el calendario vacacional del personal en una única fuente de consulta, ordenada y lista para compartir o exportar.
 
 **Objetivo:**  
-Que cada gerencia programe con claridad los días libres de su equipo, detecte a tiempo si alguien se pasa del tope o deja el área descubierta, y cuente con un plan listo para compartir o exportar.
+Que cada gerencia organice con claridad los días libres de su equipo, identifique a tiempo desviaciones respecto al tope legal o riesgos de cobertura operativa, y disponga de un plan consolidado para su gestión y seguimiento.
 
-**Flujo de gestión:** Ingreso corporativo → Marcado del plan en la grilla → Chequeo de reglas y cobertura → Consulta de récord → Descarga en Excel.
+**Flujo de gestión:** Acceso corporativo → Registro del plan en el tablero de planificación → Validación de reglas y cobertura → Consulta del récord vacacional → Exportación en Excel.
 
-**Próximamente:** Cierre de pruebas con usuarios reales y ajuste fino de lo ya construido.
+**Beneficios:**
+- **Visibilidad centralizada** del plan anual por empresa, gerencia y área
+- **Control automático** de topes, fraccionamiento y días programados
+- **Alertas de cobertura** para anticipar semanas con baja dotación
+- **Acceso seguro** con cuenta Microsoft corporativa, sin contraseñas adicionales
+- **Récord integrado** de vacaciones y asistencia en una sola vista
+- **Exportación oficial** a Excel para reportes y archivo
+- **Trazabilidad** de cambios para auditoría y seguimiento
+
+**Próximamente:** Validación con usuarios clave y refinamiento de las funcionalidades implementadas.
 
 ---
 
@@ -53,8 +62,9 @@ Desde aquí se puede:
 
 | Rol | Qué ve / qué puede hacer |
 |-----|---------------------------|
-| **Usuario normal** | Solo la gerencia que tiene asignada. Puede planificar y consultar dentro de ese alcance. |
-| **Administrador** | Todas las gerencias, filtros libres, pantalla de Admin (usuarios, historial, cobertura de fotos). |
+| **Jefe** | Solo el personal de **su área**. Puede planificar y consultar dentro de esa área. |
+| **Gerente** | Todo el personal de **su división** (todas las áreas que la componen). Puede filtrar por área. |
+| **Administrador** | Todas las divisiones, filtros libres, pantalla de Admin (usuarios, historial, cobertura de fotos). |
 
 ### Pantallas principales
 

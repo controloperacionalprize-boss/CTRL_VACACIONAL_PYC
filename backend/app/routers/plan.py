@@ -24,11 +24,13 @@ from ..domain.calendar import (
     move_vacation_period,
     refresh_week_targets,
     reject_if_art8_invalido,
+    reject_if_despues_de_vencimiento,
     reject_if_exceeds_saldo,
     reject_if_start_in_past,
     selected_count,
     today_lima,
     vacation_periods,
+    vacation_record_for,
     week_dates,
     week_is_locked,
 )
@@ -40,7 +42,8 @@ from ..domain.documents import (
     fill_template,
     reconstruct_old_periods,
 )
-from ..domain.plan import log_change, persist_employee, validate_plan
+from ..domain.plan import log_change, persist_employee, sparse_weeks, validate_plan
+from ..domain.workflow import enrich_workers, flujo_from_row, load_flujos, reject_if_cannot_edit
 from ..services import get_employee, list_employees, load_scope_plan
 
 router = APIRouter(prefix="/api/plan", tags=["plan"])
@@ -58,6 +61,16 @@ def _load_employee_plan(cur, user: dict, dni: str, year: int):
         raise HTTPException(404, _NOT_IN_SCOPE)
     daily_set, targets = load_scope_plan(cur, year, [emp])
     return emp, daily_set, targets
+
+
+def _guard_flujo_edit(cur, user: dict, emp: dict, year: int, today: date | None = None) -> None:
+    today = today or today_lima()
+    flujos = load_flujos(cur, year, [emp["dni"]])
+    estado = (flujos.get(str(emp["dni"])) or flujo_from_row(None))["estado"]
+    try:
+        reject_if_cannot_edit(user, emp, estado, today)
+    except ValueError as exc:
+        raise _http_value_error(exc) from exc
 
 
 def _persist_and_log(cur, year: int, emp: dict, daily_set, targets, user: dict, deltas: list) -> None:
@@ -212,7 +225,7 @@ def get_plan(
     current_year, current_week, _ = today.isocalendar()
     with get_conn(write=False) as conn:
         cur = conn.cursor()
-        employees = list_employees(cur, user, empresa, gerencia, area, q)
+        employees = list_employees(cur, user, empresa, gerencia, area, q, with_photos=True)
         daily_set, targets = load_scope_plan(cur, year, employees)
         dnis = [e["dni"] for e in employees]
         counts = {}
@@ -223,13 +236,16 @@ def get_plan(
                 (year, dnis),
             )
             counts = {str(r["dni"]): int(r["n"]) for r in cur.fetchall()}
+        flujos = load_flujos(cur, year, dnis)
 
     rows = []
-    programados = pendientes = dias = 0
+    aptos = programados = pendientes = dias = 0
     for e in sorted(employees, key=lambda x: x["nombre"].casefold()):
-        weeks = [int(targets.get((e["dni"], w), 0)) for w in range(1, TOTAL_SEMANAS + 1)]
-        total = sum(weeks)
+        weeks = sparse_weeks(targets, e["dni"])
+        total = sum(weeks.values())
         tope, es_adelanto = _derecho_for_emp(e, today)
+        rec = vacation_record_for(parse_iso_date(e.get("fecha_ingreso")), [], year, today)
+        vence = rec.get("fecha_vencimiento")
         rows.append({
             **e,
             "weeks": weeks,
@@ -237,14 +253,19 @@ def get_plan(
             "cambios": counts.get(e["dni"], 0),
             "record_cumplido": not es_adelanto,
             "tope_dias": tope,
+            "record_vacacional": rec.get("record_vacacional") or "",
+            "fecha_vencimiento": vence.isoformat() if isinstance(vence, date) else None,
         })
         if es_adelanto:
             continue
+        aptos += 1
         dias += total
         if total:
             programados += 1
         else:
             pendientes += 1
+
+    rows = enrich_workers(rows, flujos, user, today)
 
     return {
         "year": year,
@@ -254,7 +275,7 @@ def get_plan(
         "total_semanas": TOTAL_SEMANAS,
         "workers": rows,
         "kpis": {
-            "trabajadores": len(rows),
+            "trabajadores": aptos,
             "programados": programados,
             "pendientes": pendientes,
             "dias": dias,
@@ -301,6 +322,7 @@ def patch_week(body: WeekPatch, user: dict = Depends(get_current_user)):
     with get_conn() as conn:
         cur = conn.cursor()
         emp, daily_set, targets = _load_employee_plan(cur, user, body.dni, body.year)
+        _guard_flujo_edit(cur, user, emp, body.year)
         nuevas: list = []
         if body.days == 0:
             clear_dates_for_week(
@@ -349,6 +371,8 @@ def patch_week(body: WeekPatch, user: dict = Depends(get_current_user)):
                     body.days,
                     body.year,
                     clear_week=body.week,
+                    fecha_ingreso=ingreso,
+                    nombre=emp["nombre"],
                 )
                 _ensure_saldo(
                     emp,
@@ -391,6 +415,7 @@ def patch_daily(body: DailyPatch, user: dict = Depends(get_current_user)):
     with get_conn() as conn:
         cur = conn.cursor()
         emp, daily_set, targets = _load_employee_plan(cur, user, body.dni, body.year)
+        _guard_flujo_edit(cur, user, emp, body.year)
         allowed = set(week_dates(body.year, body.week))
         modo = allowed_type(emp["tipo_personal"], body.dni)
         today = today_lima()
@@ -402,6 +427,16 @@ def patch_daily(body: DailyPatch, user: dict = Depends(get_current_user)):
                     400,
                     f"No se puede marcar el {d.strftime('%d/%m/%Y')}: solo desde hoy hacia adelante.",
                 )
+        try:
+            reject_if_despues_de_vencimiento(
+                list(body.dates),
+                parse_iso_date(emp.get("fecha_ingreso")),
+                body.year,
+                nombre=emp["nombre"],
+                today=today,
+            )
+        except ValueError as exc:
+            raise _http_value_error(exc) from exc
         for d in week_dates(body.year, body.week):
             if date_is_past(d, today):
                 continue
@@ -430,7 +465,7 @@ def patch_daily(body: DailyPatch, user: dict = Depends(get_current_user)):
             _ensure_saldo(
                 emp,
                 pedidas=n,
-                programados_base=programados,
+                programados_base=programados_base,
                 daily_set=daily_set,
                 dni=body.dni,
                 year=body.year,
@@ -456,6 +491,7 @@ def consecutive(body: ConsecutiveIn, user: dict = Depends(get_current_user)):
     with get_conn() as conn:
         cur = conn.cursor()
         emp, daily_set, targets = _load_employee_plan(cur, user, body.dni, body.year)
+        _guard_flujo_edit(cur, user, emp, body.year)
         ingreso = parse_iso_date(emp.get("fecha_ingreso"))
         programados = count_days_in_record(daily_set, body.dni, body.year, body.start_date, ingreso)
         derecho, es_adelanto = _derecho_for_emp(emp, today_lima())
@@ -475,6 +511,8 @@ def consecutive(body: ConsecutiveIn, user: dict = Depends(get_current_user)):
                 body.start_date,
                 body.days,
                 body.year,
+                fecha_ingreso=ingreso,
+                nombre=emp["nombre"],
             )
             _ensure_saldo(
                 emp,
@@ -540,6 +578,7 @@ def period_move(body: PeriodMoveIn, user: dict = Depends(get_current_user)):
     with get_conn() as conn:
         cur = conn.cursor()
         emp, daily_set, targets = _load_employee_plan(cur, user, body.dni, body.year)
+        _guard_flujo_edit(cur, user, emp, body.year)
         today = today_lima()
         periods = vacation_periods(daily_set, body.dni, body.year, today)
         found = next((p for p in periods if p["inicio"] == body.old_start), None)
@@ -573,6 +612,8 @@ def period_move(body: PeriodMoveIn, user: dict = Depends(get_current_user)):
                 body.new_start,
                 n,
                 today=today,
+                fecha_ingreso=ingreso,
+                nombre=emp["nombre"],
             )
             _ensure_saldo(
                 emp,
@@ -626,7 +667,7 @@ def generar_documento(body: DocumentoIn, user: dict = Depends(get_current_user))
     inicio = body.start_date
     fin = body.fin or (matched["fin"] if matched else None)
     if fin is None:
-        raise HTTPException(400, "No se encontró el tramo programado para armar el documento.")
+        raise HTTPException(400, "No se encontró el período programado para armar el documento.")
     dias = body.days
     anteriores = (
         reconstruct_old_periods(periods, body.old_start, inicio)

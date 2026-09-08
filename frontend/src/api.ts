@@ -13,7 +13,7 @@ export function authHeader(): HeadersInit {
 }
 
 function timeoutFor(path: string) {
-  return path.includes("/export") || path.includes("/documento") || path.includes("/asistencia")
+  return path.includes("/export") || path.includes("/documento") || path.includes("/asistencia") || path.includes("/flujo/excel")
     ? LONG_TIMEOUT_MS
     : DEFAULT_TIMEOUT_MS;
 }
@@ -28,8 +28,8 @@ async function request(path: string, init: RequestInit = {}): Promise<Response> 
       ...init,
       signal: init.signal ?? controller.signal,
       headers: {
-        "Content-Type": "application/json",
         ...authHeader(),
+        ...(init.body ? { "Content-Type": "application/json" } : {}),
         ...(init.headers || {}),
       },
     });
@@ -61,6 +61,10 @@ async function request(path: string, init: RequestInit = {}): Promise<Response> 
           ? "No tienes permiso para esta acción."
           : res.status === 404
             ? "No encontramos esa información."
+            : res.status === 413
+              ? "El archivo es demasiado grande."
+              : res.status === 429
+                ? "Demasiados intentos. Espera un momento e inténtalo de nuevo."
             : res.status === 503
               ? "El servidor está muy ocupado. Inténtalo de nuevo en unos segundos."
               : res.status >= 500
@@ -96,6 +100,46 @@ export async function downloadFile(path: string, init: RequestInit = {}, fallbac
   a.download = filenameFromDisposition(res.headers.get("content-disposition"), fallbackName);
   a.click();
   URL.revokeObjectURL(url);
+}
+
+export async function uploadFile<T>(path: string, file: File, field = "file"): Promise<T> {
+  const form = new FormData();
+  form.append(field, file);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutFor(path));
+  let res: Response;
+  try {
+    res = await fetch(`${API}${path}`, {
+      method: "POST",
+      signal: controller.signal,
+      headers: { ...authHeader() },
+      body: form,
+    });
+  } catch (e) {
+    if (e instanceof DOMException && e.name === "AbortError") {
+      throw new Error("El servidor tardó demasiado en responder. Revisa tu conexión e inténtalo de nuevo.");
+    }
+    throw new Error("No se pudo conectar con el servidor. Revisa tu conexión e inténtalo de nuevo.");
+  } finally {
+    clearTimeout(timer);
+  }
+  if (res.status === 401) {
+    localStorage.removeItem("vac_token");
+    window.location.href = "/login";
+  }
+  if (!res.ok) {
+    let detail: unknown = res.statusText;
+    try {
+      const body = await res.json();
+      detail = body.detail ?? body;
+    } catch {
+      /* ignore */
+    }
+    throw new Error(formatApiError(detail, "No se pudo cargar el archivo."));
+  }
+  const ct = res.headers.get("content-type") || "";
+  if (ct.includes("application/json")) return res.json();
+  return res as unknown as T;
 }
 
 export function qs(params: Record<string, string | number | boolean | string[] | undefined>) {

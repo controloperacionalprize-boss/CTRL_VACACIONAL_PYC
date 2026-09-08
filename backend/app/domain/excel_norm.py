@@ -173,8 +173,10 @@ def normalize_users(df: pd.DataFrame) -> pd.DataFrame:
         "MAIL": "CORREO",
         "CORREO_CORPORATIVO": "CORREO",
         "GERENCIA_USUARIO": "GERENCIA",
+        "DIVISION_USUARIO": "GERENCIA",
         "ROL_USUARIO": "ROL",
         "ESTADO": "ACTIVO",
+        "AREA_USUARIO": "AREA",
     }
     for old, new in aliases.items():
         if old in df.columns and new not in df.columns:
@@ -191,13 +193,15 @@ def normalize_users(df: pd.DataFrame) -> pd.DataFrame:
     missing = [c for c in required if c not in df.columns]
     if missing:
         raise ValueError("El maestro de usuarios no tiene las columnas: " + ", ".join(missing))
-    for c in required:
+    if "AREA" not in df.columns:
+        df["AREA"] = ""
+    for c in required + ["AREA"]:
         df[c] = df[c].fillna("").astype(str).str.strip()
     df["USUARIO"] = df["USUARIO"].str.lower()
     df["CORREO"] = df["CORREO"].str.lower()
     df["ACTIVO"] = df["ACTIVO"].str.upper()
     df["ROL"] = df["ROL"].str.upper()
-    return df[required].drop_duplicates("CORREO").reset_index(drop=True)
+    return df[required + ["AREA"]].drop_duplicates("CORREO").reset_index(drop=True)
 
 
 def normalize_vacation_records(df: pd.DataFrame | None) -> pd.DataFrame:

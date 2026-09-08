@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS users (
     nombre_usuario TEXT NOT NULL DEFAULT '',
     nombre_persona TEXT NOT NULL DEFAULT '',
     gerencia TEXT NOT NULL DEFAULT '',
+    area TEXT NOT NULL DEFAULT '',
     rol TEXT NOT NULL DEFAULT 'USER',
     activo BOOLEAN NOT NULL DEFAULT TRUE,
     actualizado TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -108,3 +109,24 @@ CREATE TABLE IF NOT EXISTS vacation_records (
     fecha_vencimiento DATE,
     fecha_limite DATE
 );
+
+-- Flujo jefe → gerente → admin (un estado por persona y año).
+CREATE TABLE IF NOT EXISTS plan_flujo (
+    anio INTEGER NOT NULL,
+    dni TEXT NOT NULL,
+    estado TEXT NOT NULL DEFAULT 'BORRADOR',
+    apto BOOLEAN NOT NULL DEFAULT FALSE,
+    cumple_record DATE,
+    jefe_correo TEXT NOT NULL DEFAULT '',
+    enviado_at TIMESTAMPTZ,
+    gerente_correo TEXT NOT NULL DEFAULT '',
+    validado_at TIMESTAMPTZ,
+    admin_correo TEXT NOT NULL DEFAULT '',
+    recepcionado_at TIMESTAMPTZ,
+    observacion TEXT NOT NULL DEFAULT '',
+    actualizado TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (anio, dni)
+);
+
+CREATE INDEX IF NOT EXISTS idx_plan_flujo_estado ON plan_flujo (anio, estado);
+CREATE INDEX IF NOT EXISTS idx_employees_area ON employees (area);

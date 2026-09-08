@@ -24,6 +24,10 @@ def _make_pool(url: str) -> SimpleConnectionPool:
         dsn=url,
         cursor_factory=psycopg2.extras.RealDictCursor,
         connect_timeout=10,
+        keepalives=1,
+        keepalives_idle=30,
+        keepalives_interval=10,
+        keepalives_count=3,
     )
 
 
@@ -50,6 +54,52 @@ def close_pool():
         _pool = None
 
 
+def _conn_open(conn) -> bool:
+    return conn is not None and getattr(conn, "closed", 1) == 0
+
+
+def _safe_rollback(conn) -> None:
+    if not _conn_open(conn):
+        return
+    try:
+        conn.rollback()
+    except Exception:
+        return
+
+
+def _conn_alive(conn) -> bool:
+    if not _conn_open(conn):
+        return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1")
+        conn.rollback()
+        return True
+    except Exception:
+        _safe_rollback(conn)
+        return False
+
+
+def _checkout():
+    pool = get_pool()
+    last_error: Exception | None = None
+    for _ in range(2):
+        try:
+            conn = pool.getconn()
+        except PoolError as exc:
+            raise HTTPException(
+                503, "El servidor está muy ocupado en este momento. Intenta de nuevo en unos segundos."
+            ) from exc
+        if _conn_alive(conn):
+            return pool, conn
+        last_error = psycopg2.InterfaceError("la conexión del pool ya no responde")
+        try:
+            pool.putconn(conn, close=True)
+        except Exception:
+            pass
+    raise HTTPException(503, "No hay conexión con la base de datos. Intenta de nuevo.") from last_error
+
+
 def init_schema(conn=None):
     """Solo para instalaciones nuevas. La API no lo ejecuta al arrancar."""
     own = conn is None
@@ -65,26 +115,55 @@ def init_schema(conn=None):
             get_pool().putconn(conn)
 
 
+def ensure_scope_columns() -> None:
+    """Columnas y tablas nuevas en bases ya existentes."""
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS area TEXT NOT NULL DEFAULT ''"
+        )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS plan_flujo (
+                anio INTEGER NOT NULL,
+                dni TEXT NOT NULL,
+                estado TEXT NOT NULL DEFAULT 'BORRADOR',
+                apto BOOLEAN NOT NULL DEFAULT FALSE,
+                cumple_record DATE,
+                jefe_correo TEXT NOT NULL DEFAULT '',
+                enviado_at TIMESTAMPTZ,
+                gerente_correo TEXT NOT NULL DEFAULT '',
+                validado_at TIMESTAMPTZ,
+                admin_correo TEXT NOT NULL DEFAULT '',
+                recepcionado_at TIMESTAMPTZ,
+                observacion TEXT NOT NULL DEFAULT '',
+                actualizado TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                PRIMARY KEY (anio, dni)
+            )
+            """
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_plan_flujo_estado ON plan_flujo (anio, estado)"
+        )
+
+
 @contextmanager
 def get_conn(*, write: bool = True):
-    pool = get_pool()
-    try:
-        conn = pool.getconn()
-    except PoolError as exc:
-        raise HTTPException(
-            503, "El servidor está muy ocupado en este momento. Intenta de nuevo en unos segundos."
-        ) from exc
+    pool, conn = _checkout()
     try:
         yield conn
         if write:
             conn.commit()
         else:
-            conn.rollback()
+            _safe_rollback(conn)
     except Exception:
-        conn.rollback()
+        _safe_rollback(conn)
         raise
     finally:
-        pool.putconn(conn)
+        try:
+            pool.putconn(conn, close=not _conn_open(conn))
+        except Exception:
+            pass
 
 
 def check_connection() -> bool:

@@ -216,7 +216,7 @@ export function CalendarPage() {
 
   useEffect(() => {
     let cancelled = false;
-    api<{ items: Emp[] }>(`/api/employees${qs(params)}`)
+    api<{ items: Emp[] }>(`/api/employees${qs({ ...params, photos: false })}`)
       .then((r) => {
         if (cancelled) return;
         const items = r.items || [];

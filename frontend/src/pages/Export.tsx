@@ -7,7 +7,7 @@ import { Alert, Button, Icon, PageHeader } from "../components/ui";
 const SHEETS = [
   ["Resumen", "Totales del equipo que estás viendo"],
   ["Planificación", "Misma grilla de la web: nombre, DNI, área, tipo, total y semanas"],
-  ["Periodos", "Tramos de vacaciones (inicio, fin y días), no por semana"],
+  ["Periodos", "Períodos de vacaciones (inicio, fin y días), no por semana"],
   ["Récord vacacional", "Calculado con fecha de ingreso (maestro) y días programados (cronograma)"],
   ["Cambios", "Quién modificó el plan y cuándo"],
 ] as const;
@@ -104,6 +104,7 @@ export function ExportPage() {
   } | null>(null);
   const [busy, setBusy] = useState(false);
   const [downloadError, setDownloadError] = useState("");
+  const [loadError, setLoadError] = useState("");
   const params = useMemo(
     () => ({
       year: filters.year,
@@ -115,9 +116,21 @@ export function ExportPage() {
   );
 
   useEffect(() => {
+    let cancelled = false;
+    setLoadError("");
+    setResult(null);
     api<{ errors: string[]; groups?: Group[]; warnings: string[]; warning_count: number }>(
       `/api/plan/validate${qs(params)}`
-    ).then(setResult);
+    )
+      .then((r) => {
+        if (!cancelled) setResult(r);
+      })
+      .catch((e) => {
+        if (!cancelled) setLoadError(e instanceof Error ? e.message : "No se pudo revisar el plan.");
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [params]);
 
   async function download() {
@@ -166,7 +179,11 @@ export function ExportPage() {
         </div>
 
         <div className="order-1 space-y-4 lg:order-2">
-          {result ? (
+          {loadError ? (
+            <Alert tone="error" title="No se pudo revisar el plan">
+              {loadError}
+            </Alert>
+          ) : result ? (
             total === 0 ? (
               <Alert tone="success" title="El plan está en orden">
                 Puedes descargar el Excel. No hay nada que debas corregir.

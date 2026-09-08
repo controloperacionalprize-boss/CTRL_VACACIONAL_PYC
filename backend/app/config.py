@@ -26,11 +26,12 @@ class Settings(BaseSettings):
         "https://ctrl-vacacional-pyc.vercel.app,"
         "https://ctrl-vacacional-pyc-controloperacionalprize-boss-projects.vercel.app"
     )
-    # Producción, git y previews de Vercel:
-    # https://ctrl-vacacional-pyc.vercel.app
-    # https://ctrl-vacacional-pyc-git-….vercel.app
-    # https://ctrl-vacacional-<hash>-<equipo>.vercel.app
-    cors_origin_regex: str = r"https://ctrl-vacacional[\w.-]*\.vercel\.app$"
+    # Producción va en cors_origins. Este regex solo cubre previews del team Prize
+    # (…-controloperacionalprize-boss-projects.vercel.app), no cualquier
+    # ctrl-vacacional-*.vercel.app de un tercero.
+    cors_origin_regex: str = (
+        r"https://ctrl-vacacional[\w.-]*controloperacionalprize[\w.-]*\.vercel\.app$"
+    )
     expose_docs: bool = False
 
     attendance_database_url: str = ""

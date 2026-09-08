@@ -7,6 +7,7 @@ import { PlanPage } from "./pages/Plan";
 import { DashboardPage } from "./pages/Dashboard";
 import { CalendarPage } from "./pages/Calendar";
 import { ExportPage } from "./pages/Export";
+import { ValidacionesPage } from "./pages/Validaciones";
 import { AdminPage } from "./pages/Admin";
 import { AppCtx, type Filters, type User } from "./state";
 
@@ -87,6 +88,7 @@ export function App() {
             <Route path="/record-vacacional" element={<CalendarPage />} />
             <Route path="/calendario" element={<Navigate to="/record-vacacional" replace />} />
             <Route path="/exportar" element={<ExportPage />} />
+            <Route path="/validaciones" element={<ValidacionesPage />} />
             <Route path="/admin" element={<AdminPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>

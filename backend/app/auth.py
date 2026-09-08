@@ -8,6 +8,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from .config import get_settings
 from .db import get_conn
+from .org_scope import effective_role, resolve_division
 from .photos import resolve_user_foto_url
 
 bearer = HTTPBearer(auto_error=False)
@@ -18,15 +19,23 @@ def user_from_row(row) -> dict:
     correo = row["correo"]
     usuario = row["usuario"]
     nombre_persona = row["nombre_persona"]
+    gerencia = row["gerencia"] or ""
+    area = (row.get("area") if hasattr(row, "get") else "") or ""
+    role = effective_role({"rol": rol, "is_admin": rol == "ADMIN"})
+    division = resolve_division(gerencia, area) or gerencia
     return {
         "correo": correo,
         "usuario": usuario,
         "nombre_usuario": row["nombre_usuario"],
         "nombre_persona": nombre_persona,
-        "gerencia": row["gerencia"],
-        "rol": rol,
+        "gerencia": gerencia,
+        "area": area,
+        "division": division,
+        "rol": role if rol == "USER" else rol,
         "activo": bool(row["activo"]),
-        "is_admin": rol == "ADMIN",
+        "is_admin": role == "ADMIN",
+        "is_gerente": role == "GERENTE",
+        "is_jefe": role == "JEFE",
         "foto_url": resolve_user_foto_url(
             nombre=nombre_persona or row["nombre_usuario"],
             correo=correo,
@@ -43,7 +52,7 @@ def load_user_by_email(correo: str) -> dict | None:
         cur = conn.cursor()
         cur.execute(
             """SELECT correo, usuario, nombre_usuario, nombre_persona,
-                      gerencia, rol, activo
+                      gerencia, area, rol, activo
                FROM users WHERE correo = %s""",
             (correo,),
         )
@@ -69,7 +78,12 @@ def make_session_token(correo: str) -> str:
 def decode_session_token(token: str) -> dict:
     settings = get_settings()
     try:
-        return jwt.decode(token, settings.jwt_secret, algorithms=["HS256"])
+        return jwt.decode(
+            token,
+            settings.jwt_secret,
+            algorithms=["HS256"],
+            issuer="vacaciones-ms",
+        )
     except Exception as exc:
         raise HTTPException(401, "La sesión caducó. Vuelve a iniciar sesión.") from exc
 
@@ -85,7 +99,7 @@ def get_current_user(
     if not user:
         raise HTTPException(
             403,
-            "Tu correo no está autorizado para usar esta aplicación, o la cuenta está inactiva.",
+            "Tu cuenta no está autorizada para usar esta aplicación, o está inactiva.",
         )
     return user
 

@@ -263,7 +263,7 @@ export function EmpleadosRoster() {
                   </Select>
                 </Field>
                 {user?.is_admin ? (
-                  <Field label="GERENCIA">
+                  <Field label="DIVISIÓN">
                     <Select
                       value={filters.gerencias.includes("TODAS") ? "TODAS" : filters.gerencias[0]}
                       onChange={(e) =>

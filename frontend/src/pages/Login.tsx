@@ -10,6 +10,7 @@ type Flow = {
   user_code: string;
   verification_uri: string;
   interval: number;
+  expires_in?: number;
 };
 
 function MicrosoftLogo() {
@@ -33,8 +34,16 @@ export function Login({ onLogin }: Props) {
     if (!flow) return;
     let stop = false;
     const wait = Math.max(3, flow.interval || 5) * 1000;
+    const deadline = Date.now() + Math.max(30, flow.expires_in || 900) * 1000;
     const id = window.setInterval(async () => {
       if (stop) return;
+      if (Date.now() >= deadline) {
+        stop = true;
+        setFlow(null);
+        setLoading(false);
+        setError("El código de Microsoft expiró. Vuelve a intentarlo.");
+        return;
+      }
       try {
         const data = await api<{ status: string; access_token?: string; user?: User }>(
           "/api/auth/microsoft/poll",

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, Pencil } from "lucide-react";
 import { Navigate } from "react-router-dom";
 import { api, qs } from "../api";
 import { useApp } from "../state";
@@ -13,6 +13,7 @@ type AppUser = {
   nombre_usuario: string;
   nombre_persona: string;
   gerencia: string;
+  area: string;
   rol: string;
   activo: boolean;
 };
@@ -46,8 +47,92 @@ const emptyForm = {
   correo: "",
   nombre_persona: "",
   gerencia: "",
-  rol: "USER",
+  area: "",
+  rol: "GERENTE",
 };
+
+const ROLES = [
+  { value: "GERENTE", label: "Gerente (división)" },
+  { value: "JEFE", label: "Jefe (área)" },
+  { value: "ADMIN", label: "Administrador" },
+  { value: "USER", label: "Gerente (legado)" },
+];
+
+type UserForm = typeof emptyForm;
+
+function rolEsGerente(rol: string) {
+  return rol === "GERENTE" || rol === "USER";
+}
+
+function rolEsJefe(rol: string) {
+  return rol === "JEFE";
+}
+
+function rolLabel(rol: string) {
+  return ROLES.find((r) => r.value === rol)?.label || rol;
+}
+
+function formFromUser(u: AppUser): UserForm {
+  return {
+    correo: u.correo,
+    nombre_persona: u.nombre_persona || u.nombre_usuario,
+    gerencia: u.gerencia || "",
+    area: u.area || "",
+    rol: u.rol === "USER" ? "GERENTE" : u.rol,
+  };
+}
+
+function applyRol(form: UserForm, rol: string): UserForm {
+  return {
+    ...form,
+    rol,
+    gerencia: rolEsGerente(rol) ? form.gerencia : "",
+    area: rolEsJefe(rol) ? form.area : "",
+  };
+}
+
+function ScopeFields({
+  form,
+  onChange,
+  gerencias,
+  areas,
+}: {
+  form: UserForm;
+  onChange: (next: UserForm) => void;
+  gerencias: string[];
+  areas: string[];
+}) {
+  const divisiones = form.gerencia && !gerencias.includes(form.gerencia) ? [form.gerencia, ...gerencias] : gerencias;
+  const areaOpts = form.area && !areas.includes(form.area) ? [form.area, ...areas] : areas;
+  return (
+    <>
+      {rolEsGerente(form.rol) ? (
+        <Field label="DIVISIÓN">
+          <Select value={form.gerencia} onChange={(e) => onChange({ ...form, gerencia: e.target.value })}>
+            <option value="">Selecciona…</option>
+            {divisiones.map((v) => (
+              <option key={v} value={v}>
+                {v}
+              </option>
+            ))}
+          </Select>
+        </Field>
+      ) : null}
+      {rolEsJefe(form.rol) ? (
+        <Field label="ÁREA">
+          <Select value={form.area} onChange={(e) => onChange({ ...form, area: e.target.value })}>
+            <option value="">Selecciona…</option>
+            {areaOpts.map((v) => (
+              <option key={v} value={v}>
+                {v}
+              </option>
+            ))}
+          </Select>
+        </Field>
+      ) : null}
+    </>
+  );
+}
 
 function formatWhen(value: string) {
   const raw = value.includes("T") ? value : value.replace(" ", "T");
@@ -147,7 +232,11 @@ export function AdminPage() {
   const [tab, setTab] = useState<"users" | "logs" | "empleados">("users");
   const [users, setUsers] = useState<AppUser[]>([]);
   const [gerencias, setGerencias] = useState<string[]>([]);
+  const [areas, setAreas] = useState<string[]>([]);
   const [form, setForm] = useState(emptyForm);
+  const [editing, setEditing] = useState<AppUser | null>(null);
+  const [editForm, setEditForm] = useState(emptyForm);
+  const [editSaving, setEditSaving] = useState(false);
   const [error, setError] = useState("");
   const [ok, setOk] = useState("");
   const [threads, setThreads] = useState<Thread[]>([]);
@@ -155,9 +244,10 @@ export function AdminPage() {
   const [openDnis, setOpenDnis] = useState<Set<string>>(() => new Set());
 
   function loadUsers() {
-    return api<{ items: AppUser[]; gerencias: string[] }>("/api/admin/users").then((r) => {
+    return api<{ items: AppUser[]; gerencias: string[]; areas?: string[] }>("/api/admin/users").then((r) => {
       setUsers(r.items);
       setGerencias(r.gerencias);
+      setAreas(r.areas || []);
     });
   }
 
@@ -209,6 +299,14 @@ export function AdminPage() {
   async function addUser() {
     setError("");
     setOk("");
+    if (rolEsJefe(form.rol) && !form.area.trim()) {
+      setError("El jefe debe tener un área.");
+      return;
+    }
+    if (rolEsGerente(form.rol) && !form.gerencia.trim()) {
+      setError("El gerente debe tener una división.");
+      return;
+    }
     try {
       await api("/api/admin/users", { method: "POST", body: JSON.stringify(form) });
       setForm(emptyForm);
@@ -230,6 +328,39 @@ export function AdminPage() {
       await loadUsers();
     } catch (e) {
       setError(e instanceof Error ? e.message : "No se pudo actualizar.");
+    }
+  }
+
+  async function saveEdit() {
+    if (!editing) return;
+    setError("");
+    setOk("");
+    if (rolEsJefe(editForm.rol) && !editForm.area.trim()) {
+      setError("El jefe debe tener un área.");
+      return;
+    }
+    if (rolEsGerente(editForm.rol) && !editForm.gerencia.trim()) {
+      setError("El gerente debe tener una división.");
+      return;
+    }
+    setEditSaving(true);
+    try {
+      await api(`/api/admin/users/${encodeURIComponent(editing.correo)}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          nombre_persona: editForm.nombre_persona,
+          rol: editForm.rol,
+          gerencia: rolEsGerente(editForm.rol) ? editForm.gerencia : "",
+          area: rolEsJefe(editForm.rol) ? editForm.area : "",
+        }),
+      });
+      setEditing(null);
+      setOk("Usuario actualizado.");
+      await loadUsers();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "No se pudo actualizar.");
+    } finally {
+      setEditSaving(false);
     }
   }
 
@@ -265,116 +396,180 @@ export function AdminPage() {
 
       {tab === "users" ? (
         <>
-          <div className="grid grid-cols-1 items-end gap-3 rounded-xl border border-border bg-card p-4 sm:grid-cols-2 lg:grid-cols-[1.4fr_1.2fr_1fr_auto_auto]">
-        <Field label="CORREO" className="sm:col-span-2 lg:col-span-1">
-          <Input
-            type="email"
-            value={form.correo}
-            onChange={(e) => setForm({ ...form, correo: e.target.value })}
-            placeholder="nombre@empresa.com"
-          />
-        </Field>
-        <Field label="NOMBRE">
-          <Input
-            value={form.nombre_persona}
-            onChange={(e) => setForm({ ...form, nombre_persona: e.target.value })}
-          />
-        </Field>
-        <Field label="GERENCIA">
-          <Input
-            list="gerencias-admin"
-            value={form.gerencia}
-            onChange={(e) => setForm({ ...form, gerencia: e.target.value })}
-          />
-          <datalist id="gerencias-admin">
-            {gerencias.map((g) => (
-              <option key={g} value={g} />
-            ))}
-          </datalist>
-        </Field>
-        <Field label="ROL" className="w-full lg:w-36">
-          <Select value={form.rol} onChange={(e) => setForm({ ...form, rol: e.target.value })}>
-            <option value="USER">USER</option>
-            <option value="ADMIN">ADMIN</option>
-          </Select>
-        </Field>
-        <Button onClick={addUser} className="w-full lg:w-auto">Agregar</Button>
-      </div>
-
-      <div className="space-y-3 md:hidden">
-        {users.map((u) => (
-          <article key={u.correo} className="rounded-xl border border-border bg-card p-3.5">
-            <div className="flex items-start justify-between gap-2">
-              <div className="min-w-0">
-                <p className="truncate text-[14px] font-semibold">{u.nombre_persona || u.nombre_usuario}</p>
-                <p className="mt-0.5 truncate text-[12px] text-muted-foreground">{u.correo}</p>
-                <p className="mt-1 text-[12px] text-foreground">{u.gerencia || "—"}</p>
-              </div>
-              <Button
-                variant={u.activo ? "outline" : "primary"}
-                className="h-8 shrink-0 px-3 text-xs"
-                disabled={u.correo === user.correo}
-                onClick={() => patchUser(u.correo, { activo: !u.activo })}
-              >
-                {u.activo ? "Activo" : "Inactivo"}
-              </Button>
-            </div>
-            <Field label="ROL" className="mt-3">
-              <Select
-                value={u.rol}
-                onChange={(e) => patchUser(u.correo, { rol: e.target.value })}
-                disabled={u.correo === user.correo}
-              >
-                <option value="USER">USER</option>
-                <option value="ADMIN">ADMIN</option>
+          <div className="grid grid-cols-1 items-end gap-3 rounded-xl border border-border bg-card p-4 sm:grid-cols-2 lg:grid-cols-[1.3fr_1.1fr_1fr_auto_auto]">
+            <Field label="CORREO" className="sm:col-span-2 lg:col-span-1">
+              <Input
+                type="email"
+                value={form.correo}
+                onChange={(e) => setForm({ ...form, correo: e.target.value })}
+                placeholder="nombre@empresa.com"
+              />
+            </Field>
+            <Field label="NOMBRE">
+              <Input
+                value={form.nombre_persona}
+                onChange={(e) => setForm({ ...form, nombre_persona: e.target.value })}
+              />
+            </Field>
+            <Field label="ROL" className="w-full lg:w-44">
+              <Select value={form.rol} onChange={(e) => setForm(applyRol(form, e.target.value))}>
+                {ROLES.filter((r) => r.value !== "USER").map((r) => (
+                  <option key={r.value} value={r.value}>
+                    {r.label}
+                  </option>
+                ))}
               </Select>
             </Field>
-          </article>
-        ))}
-      </div>
+            <ScopeFields form={form} onChange={setForm} gerencias={gerencias} areas={areas} />
+            <Button onClick={addUser} className="w-full lg:w-auto">
+              Agregar
+            </Button>
+          </div>
 
-      <div className="hidden overflow-auto rounded-[4px] border border-border bg-card md:block">
-        <table className="w-full text-sm">
-          <thead className="bg-muted text-left">
-            <tr>
-              {["Nombre", "Correo", "Gerencia", "Rol", "Estado"].map((h) => (
-                <th key={h} className="px-3 py-2 text-[11px] font-semibold text-muted-foreground">
-                  {h}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
+          <div className="space-y-3 md:hidden">
             {users.map((u) => (
-              <tr key={u.correo} className="border-t border-border">
-                <td className="px-3 py-2 font-medium">{u.nombre_persona || u.nombre_usuario}</td>
-                <td className="px-3 py-2">{u.correo}</td>
-                <td className="px-3 py-2">{u.gerencia}</td>
-                <td className="px-3 py-2">
-                  <Select
-                    value={u.rol}
-                    onChange={(e) => patchUser(u.correo, { rol: e.target.value })}
-                    disabled={u.correo === user.correo}
-                  >
-                    <option value="USER">USER</option>
-                    <option value="ADMIN">ADMIN</option>
-                  </Select>
-                </td>
-                <td className="px-3 py-2">
+              <article key={u.correo} className="rounded-xl border border-border bg-card p-3.5">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="truncate text-[14px] font-semibold">{u.nombre_persona || u.nombre_usuario}</p>
+                    <p className="mt-0.5 truncate text-[12px] text-muted-foreground">{u.correo}</p>
+                    <p className="mt-1 text-[12px] text-foreground">{rolLabel(u.rol)}</p>
+                    <p className="mt-0.5 text-[12px] text-muted-foreground">
+                      {rolEsJefe(u.rol)
+                        ? u.area || "Sin área"
+                        : rolEsGerente(u.rol)
+                          ? u.gerencia || "Sin división"
+                          : "Toda la organización"}
+                    </p>
+                  </div>
                   <Button
                     variant={u.activo ? "outline" : "primary"}
-                    className="h-8 px-3 text-xs"
+                    className="h-8 shrink-0 px-3 text-xs"
                     disabled={u.correo === user.correo}
                     onClick={() => patchUser(u.correo, { activo: !u.activo })}
                   >
                     {u.activo ? "Activo" : "Inactivo"}
                   </Button>
-                </td>
-              </tr>
+                </div>
+                <Button
+                  variant="outline"
+                  className="mt-3 h-8 w-full text-xs"
+                  onClick={() => {
+                    setEditing(u);
+                    setEditForm(formFromUser(u));
+                    setError("");
+                    setOk("");
+                  }}
+                >
+                  <Pencil size={14} strokeWidth={1.75} />
+                  Editar
+                </Button>
+              </article>
             ))}
-          </tbody>
-        </table>
-      </div>
+          </div>
+
+          <div className="hidden overflow-auto rounded-[4px] border border-border bg-card md:block">
+            <table className="w-full text-sm">
+              <thead className="bg-muted text-left">
+                <tr>
+                  {["Nombre", "Correo", "Alcance", "Rol", "Estado", ""].map((h) => (
+                    <th key={h || "acciones"} className="px-3 py-2 text-[11px] font-semibold text-muted-foreground">
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {users.map((u) => (
+                  <tr key={u.correo} className="border-t border-border">
+                    <td className="px-3 py-2 font-medium">{u.nombre_persona || u.nombre_usuario}</td>
+                    <td className="px-3 py-2">{u.correo}</td>
+                    <td className="px-3 py-2 text-muted-foreground">
+                      {rolEsJefe(u.rol)
+                        ? u.area || "—"
+                        : rolEsGerente(u.rol)
+                          ? u.gerencia || "—"
+                          : "—"}
+                    </td>
+                    <td className="px-3 py-2">{rolLabel(u.rol)}</td>
+                    <td className="px-3 py-2">
+                      <Button
+                        variant={u.activo ? "outline" : "primary"}
+                        className="h-8 px-3 text-xs"
+                        disabled={u.correo === user.correo}
+                        onClick={() => patchUser(u.correo, { activo: !u.activo })}
+                      >
+                        {u.activo ? "Activo" : "Inactivo"}
+                      </Button>
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      <Button
+                        variant="outline"
+                        className="h-8 px-3 text-xs"
+                        onClick={() => {
+                          setEditing(u);
+                          setEditForm(formFromUser(u));
+                          setError("");
+                          setOk("");
+                        }}
+                      >
+                        <Pencil size={14} strokeWidth={1.75} />
+                        Editar
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {editing ? (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--overlay)] p-4">
+              <div className="w-full max-w-[480px] rounded-xl border border-border bg-card shadow-[0_8px_24px_#1E2C3A14]">
+                <div className="space-y-1.5 px-5 pt-5">
+                  <h3 className="text-[15px] font-semibold">Editar usuario</h3>
+                  <p className="text-[13px] text-muted-foreground">{editing.correo}</p>
+                </div>
+                <div className="space-y-3 px-5 py-3">
+                  <Field label="NOMBRE">
+                    <Input
+                      value={editForm.nombre_persona}
+                      onChange={(e) => setEditForm({ ...editForm, nombre_persona: e.target.value })}
+                    />
+                  </Field>
+                  <Field label="ROL">
+                    <Select
+                      value={editForm.rol}
+                      disabled={editing.correo === user.correo}
+                      onChange={(e) => setEditForm(applyRol(editForm, e.target.value))}
+                    >
+                      {ROLES.filter((r) => r.value !== "USER").map((r) => (
+                        <option key={r.value} value={r.value}>
+                          {r.label}
+                        </option>
+                      ))}
+                    </Select>
+                  </Field>
+                  <ScopeFields form={editForm} onChange={setEditForm} gerencias={gerencias} areas={areas} />
+                </div>
+                <div className="flex justify-end gap-2 px-5 pb-5">
+                  <Button
+                    variant="outline"
+                    disabled={editSaving}
+                    onClick={() => {
+                      setEditing(null);
+                      setError("");
+                    }}
+                  >
+                    Cancelar
+                  </Button>
+                  <Button disabled={editSaving} onClick={() => void saveEdit()}>
+                    {editSaving ? "Guardando…" : "Guardar"}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          ) : null}
         </>
       ) : tab === "empleados" ? (
         <EmpleadosRoster />

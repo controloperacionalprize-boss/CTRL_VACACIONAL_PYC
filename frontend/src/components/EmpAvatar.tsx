@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { cn } from "./ui";
 
 function initials(nombre: string) {
@@ -18,6 +18,9 @@ export function EmpAvatar({
   className?: string;
 }) {
   const [broken, setBroken] = useState(false);
+  useEffect(() => {
+    setBroken(false);
+  }, [fotoUrl]);
   const show = Boolean(fotoUrl) && !broken;
   return (
     <div
@@ -27,7 +30,14 @@ export function EmpAvatar({
       )}
     >
       {show ? (
-        <img src={fotoUrl!} alt="" className="h-full w-full object-cover" onError={() => setBroken(true)} />
+        <img
+          src={fotoUrl!}
+          alt=""
+          loading="lazy"
+          decoding="async"
+          className="h-full w-full object-cover"
+          onError={() => setBroken(true)}
+        />
       ) : (
         initials(nombre)
       )}

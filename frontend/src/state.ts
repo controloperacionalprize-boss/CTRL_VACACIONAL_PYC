@@ -6,8 +6,12 @@ export type User = {
   nombre_usuario: string;
   nombre_persona: string;
   gerencia: string;
+  area?: string;
+  division?: string;
   rol: string;
   is_admin: boolean;
+  is_gerente?: boolean;
+  is_jefe?: boolean;
   foto_url?: string | null;
 };
 

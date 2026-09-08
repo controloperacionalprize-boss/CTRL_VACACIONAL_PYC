@@ -28,6 +28,15 @@ export function addDaysIso(iso: string, extra: number) {
   return `${y}-${m}-${day}`;
 }
 
+/** Días corridos inclusivos (inicio y fin cuentan). 0 si falta alguna fecha o el fin es anterior. */
+export function inclusiveDays(startIso: string, endIso: string) {
+  if (!startIso || !endIso) return 0;
+  const a = new Date(`${startIso}T00:00:00`);
+  const b = new Date(`${endIso}T00:00:00`);
+  if (Number.isNaN(a.getTime()) || Number.isNaN(b.getTime()) || b < a) return 0;
+  return Math.round((b.getTime() - a.getTime()) / 86400000) + 1;
+}
+
 export function isoWeek(d = new Date()) {
   const t = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
   const day = t.getUTCDay() || 7;
