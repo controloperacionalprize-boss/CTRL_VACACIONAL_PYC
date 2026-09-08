@@ -190,3 +190,108 @@ def test_word_generado_sin_comentarios_de_plantilla():
         rels = z.read("word/_rels/document.xml.rels").decode("utf-8")
         assert "comments" not in rels.lower()
     assert "ANA PEREZ GOMEZ" in _all_text(data)
+
+
+def test_pdf_memorando_incluye_datos_y_no_deja_placeholders():
+    from app.domain.documents_pdf import document_plain, render_pdf
+
+    ctx = _ctx()
+    text = document_plain(1, ctx)
+    assert "ANA PEREZ GOMEZ" in text
+    assert "12345678" in text
+    assert "26 de agosto de 2026" in text
+    assert "30 (treinta) días" in text
+    assert "SUB GERENCIA DE PERSONAS & CULTURA" in text
+    assert "FIRMA Y HUELLA DEL TRABAJADOR" in text
+    assert "GTH" not in text.split("Atentamente.")[-1]
+    assert "xxxxx" not in text.lower()
+    data = render_pdf(1, ctx)
+    assert data.startswith(b"%PDF")
+    assert len(data) > 2000
+
+
+def test_pdf_fraccionamiento_llena_tablas_y_firmas():
+    from app.domain.documents_pdf import document_plain
+
+    ctx = _ctx(
+        fin=date(2026, 9, 15),
+        dias=15,
+        periodos=[
+            {"inicio": date(2026, 9, 1), "fin": date(2026, 9, 15), "dias": 15},
+            {"inicio": date(2026, 12, 1), "fin": date(2026, 12, 15), "dias": 15},
+        ],
+        programmed=[date(2026, 9, 1)],
+    )
+    text = document_plain(2, ctx)
+    assert "01/09/2026" in text
+    assert "15/12/2026" in text
+    assert "ANA PEREZ GOMEZ" in text
+    assert "YESSICA SELENE TORRES VILCHEZ" in text
+    assert "EL EMPLEADOR" in text
+    assert "SUB GERENCIA DE PERSONAS & CULTURA" in text
+    assert "FIRMA Y HUELLA DEL TRABAJADOR" in text
+    assert "JEFE INMEDIATO" not in text
+    pie = text.split("Atentamente.")[-1]
+    assert "ANA PEREZ" not in pie
+    assert "FIRMA Y HUELLA DEL TRABAJADOR" in pie
+
+
+def test_pdf_adelanto_usa_rango_y_record():
+    from app.domain.documents_pdf import document_plain
+
+    ctx = _ctx(
+        emp=_emp(
+            empresa="AQU II",
+            jefatura="CONTROL OPERACIONAL",
+            gerencia="Operaciones",
+            fecha_ingreso=date(2026, 4, 1),
+        ),
+        inicio=date(2026, 8, 26),
+        fin=date(2026, 8, 30),
+        dias=5,
+        periodos=[{"inicio": date(2026, 8, 26), "fin": date(2026, 8, 30), "dias": 5}],
+        programmed=[date(2026, 8, 26)],
+    )
+    text = document_plain(4, ctx)
+    assert "POR 5 DÍAS" in text
+    assert "del 26 al 30 de agosto del año 2026" in text
+    assert "Operaciones" in text
+    assert "xxxx" not in text.lower()
+    assert "junio del año" not in text
+    assert "JEFE INMEDIATO" not in text
+    assert "LA EMPRESA" in text.split("firman ambas partes")[-1]
+    solicitud = text.split("CONVENIO DE ADELANTO")[0]
+    assert solicitud.count("ANA PEREZ GOMEZ") == 1
+
+
+def test_pdf_modificacion_solicitud_una_firma():
+    from app.domain.documents_pdf import document_plain
+
+    ctx = _ctx(
+        fin=date(2026, 10, 19),
+        dias=15,
+        periodos=[
+            {"inicio": date(2026, 10, 5), "fin": date(2026, 10, 19), "dias": 15},
+            {"inicio": date(2026, 12, 1), "fin": date(2026, 12, 15), "dias": 15},
+        ],
+        periodos_anteriores=[
+            {"inicio": date(2026, 9, 1), "fin": date(2026, 9, 15), "dias": 15},
+            {"inicio": date(2026, 12, 1), "fin": date(2026, 12, 15), "dias": 15},
+        ],
+        programmed=[date(2026, 10, 5)],
+    )
+    solicitud = document_plain(3, ctx).split("ACUERDO COMÚN")[0]
+    assert solicitud.count("ANA PEREZ GOMEZ") == 1
+
+
+def test_pdf_memorando_sin_nombre_deja_texto_de_firma():
+    from app.domain.documents_pdf import document_plain
+
+    ctx = _ctx(emp=_emp(nombre="", dni=""))
+    text = document_plain(1, ctx)
+    assert "SUB GERENCIA DE PERSONAS & CULTURA" in text
+    assert "FIRMA Y HUELLA DEL TRABAJADOR" in text
+    pie = text.split("Atentamente.")[-1]
+    assert "ANA PEREZ" not in pie
+    assert "DNI N°" not in pie
+

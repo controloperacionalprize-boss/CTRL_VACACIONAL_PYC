@@ -80,32 +80,27 @@ function estadoTone(estado: string) {
   return "bg-[var(--primary-soft)] text-primary";
 }
 
-function ExcelInstructivo({
-  rol,
+function ExcelFechasJefe({
   year,
   busy,
   onDownload,
   onUpload,
 }: {
-  rol: string;
   year: number;
   busy: boolean;
   onDownload: () => void;
   onUpload: () => void;
 }) {
-  const esJefe = rol === "JEFE";
   return (
     <div className="overflow-hidden rounded-xl border border-border bg-card shadow-[var(--shadow-card)]">
       <div className="flex flex-col gap-4 p-4 sm:flex-row sm:items-start sm:justify-between sm:p-5">
         <div className="min-w-0">
           <p className="flex items-center gap-2 text-[15px] font-semibold">
             <FileSpreadsheet size={18} strokeWidth={1.75} className="text-primary" />
-            {esJefe ? "Excel opcional (fechas)" : "Excel opcional (estados)"}
+            Excel opcional (fechas)
           </p>
           <p className="mt-1 text-[13px] text-muted-foreground">
-            {esJefe
-              ? "Lo más simple es programar en Planificación. Usa Excel solo si quieres cargar varias fechas de una vez."
-              : "Puedes validar o recepcionar en la lista de abajo. El Excel sirve si tienes muchas personas."}
+            Lo más simple es programar en Planificación. Usa Excel solo si quieres cargar varias fechas de una vez.
           </p>
         </div>
         <div className="flex w-full shrink-0 flex-col gap-2 sm:w-auto sm:flex-row">
@@ -120,24 +115,11 @@ function ExcelInstructivo({
         </div>
       </div>
       <div className="grid gap-px border-t border-border bg-border sm:grid-cols-3">
-        {(esJefe
-          ? [
-              ["1", "Descarga la plantilla", "Sale una sola hoja: PERIODOS, con tu equipo apto del año " + year + "."],
-              ["2", "Completa las fechas", "Por cada persona, los períodos deben sumar todos los días del derecho (30, o lo que quede si ya hay goce pasado). Fechas dd/mm/aaaa. Varias filas del mismo DNI se suman."],
-              ["3", "Carga el mismo archivo", "No cambies el nombre de la hoja ni de las columnas. Las filas sin fechas se ignoran."],
-            ]
-          : [
-              ["1", "Descarga la plantilla", "Sale una sola hoja: FLUJO, con las personas de tu bandeja."],
-              [
-                "2",
-                "Cambia la columna ESTADO",
-                rol === "ADMIN"
-                  ? "Usa RECEPCIONADO u OBSERVADO. Si observas, llena OBSERVACION."
-                  : "Usa VALIDADO u OBSERVADO. Si observas, llena OBSERVACION.",
-              ],
-              ["3", "Carga el mismo archivo", "No cambies DNI ni el nombre de la hoja. El resto de columnas son de apoyo."],
-            ]
-        ).map(([n, t, d]) => (
+        {[
+          ["1", "Descarga la plantilla", "Sale una sola hoja: PERIODOS, con tu equipo apto del año " + year + "."],
+          ["2", "Completa las fechas", "Por cada persona, los períodos deben sumar todos los días del derecho (30, o lo que quede si ya hay goce pasado). Fechas dd/mm/aaaa. Varias filas del mismo DNI se suman."],
+          ["3", "Carga el mismo archivo", "No cambies el nombre de la hoja ni de las columnas. Las filas sin fechas se ignoran."],
+        ].map(([n, t, d]) => (
           <div key={n} className="flex gap-3 bg-card px-4 py-3.5 sm:px-5">
             <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary text-[12px] font-semibold text-primary-foreground">
               {n}
@@ -151,74 +133,34 @@ function ExcelInstructivo({
       </div>
       <div className="border-t border-border bg-muted/40 px-4 py-4 sm:px-5">
         <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Formato que espera el sistema</p>
-        {esJefe ? (
-          <>
-            <p className="mt-2 text-[13px]">
-              Hoja <span className="font-data font-semibold">PERIODOS</span>. Columnas: DNI, NOMBRE, AREA, FECHA_INICIO, FECHA_FIN. Los días se calculan solos.
-            </p>
-            <div className="mt-3 overflow-x-auto rounded-lg border border-border bg-card">
-              <table className="w-full min-w-[480px] text-left text-[12px]">
-                <thead className="bg-muted/70 text-[11px] uppercase tracking-wide text-muted-foreground">
-                  <tr>
-                    {["DNI", "NOMBRE", "AREA", "FECHA_INICIO", "FECHA_FIN"].map((h) => (
-                      <th key={h} className="px-3 py-2 font-semibold">
-                        {h}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr className="border-t border-border">
-                    <td className="px-3 py-2 font-data">12345678</td>
-                    <td className="px-3 py-2">Ana Pérez</td>
-                    <td className="px-3 py-2">T.I.</td>
-                    <td className="px-3 py-2 font-data">14/09/2026</td>
-                    <td className="px-3 py-2 font-data">18/09/2026</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-            <p className="mt-2 text-[12px] text-muted-foreground">
-              Solo DNI, inicio y fin. 14/09 al 18/09 son 5 días corridos. La suma por persona debe ser el derecho completo (p. ej. 30). Fechas en dd/mm/aaaa.
-            </p>
-          </>
-        ) : (
-          <>
-            <p className="mt-2 text-[13px]">
-              Hoja <span className="font-data font-semibold">FLUJO</span>. Lo que se aplica al cargar es DNI, ESTADO y OBSERVACION.
-            </p>
-            <div className="mt-3 overflow-x-auto rounded-lg border border-border bg-card">
-              <table className="w-full min-w-[480px] text-left text-[12px]">
-                <thead className="bg-muted/70 text-[11px] uppercase tracking-wide text-muted-foreground">
-                  <tr>
-                    {["DNI", "NOMBRE", "ESTADO", "OBSERVACION"].map((h) => (
-                      <th key={h} className="px-3 py-2 font-semibold">
-                        {h}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr className="border-t border-border">
-                    <td className="px-3 py-2 font-data">12345678</td>
-                    <td className="px-3 py-2">Ana Pérez</td>
-                    <td className="px-3 py-2 font-data">{rol === "ADMIN" ? "RECEPCIONADO" : "VALIDADO"}</td>
-                    <td className="px-3 py-2 text-muted-foreground">—</td>
-                  </tr>
-                  <tr className="border-t border-border">
-                    <td className="px-3 py-2 font-data">87654321</td>
-                    <td className="px-3 py-2">Luis Rojas</td>
-                    <td className="px-3 py-2 font-data">OBSERVADO</td>
-                    <td className="px-3 py-2">Falta el bloque de 15 días corridos.</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-            <p className="mt-2 text-[12px] text-muted-foreground">
-              ESTADOS válidos: BORRADOR, ENVIADO, VALIDADO, RECEPCIONADO, OBSERVADO. Escribe exactamente esas palabras, en mayúsculas.
-            </p>
-          </>
-        )}
+        <p className="mt-2 text-[13px]">
+          Hoja <span className="font-data font-semibold">PERIODOS</span>. Columnas: DNI, NOMBRE, AREA, FECHA_INICIO, FECHA_FIN. Los días se calculan solos.
+        </p>
+        <div className="mt-3 overflow-x-auto rounded-lg border border-border bg-card">
+          <table className="w-full min-w-[480px] text-left text-[12px]">
+            <thead className="bg-muted/70 text-[11px] uppercase tracking-wide text-muted-foreground">
+              <tr>
+                {["DNI", "NOMBRE", "AREA", "FECHA_INICIO", "FECHA_FIN"].map((h) => (
+                  <th key={h} className="px-3 py-2 font-semibold">
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              <tr className="border-t border-border">
+                <td className="px-3 py-2 font-data">12345678</td>
+                <td className="px-3 py-2">Ana Pérez</td>
+                <td className="px-3 py-2">T.I.</td>
+                <td className="px-3 py-2 font-data">14/09/2026</td>
+                <td className="px-3 py-2 font-data">18/09/2026</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p className="mt-2 text-[12px] text-muted-foreground">
+          Solo DNI, inicio y fin. 14/09 al 18/09 son 5 días corridos. La suma por persona debe ser el derecho completo (p. ej. 30). Fechas en dd/mm/aaaa.
+        </p>
       </div>
     </div>
   );
@@ -371,10 +313,9 @@ export function ValidacionesPage() {
         </Alert>
       ) : null}
 
-      {rol !== "GERENTE" ? (
+      {rol === "JEFE" ? (
         <>
-          <ExcelInstructivo
-            rol={rol}
+          <ExcelFechasJefe
             year={filters.year}
             busy={busy === "excel"}
             onDownload={() => void descargarExcel()}

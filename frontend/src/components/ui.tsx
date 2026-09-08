@@ -70,6 +70,7 @@ export function Kpi({
   icon,
   accent,
   className,
+  onClick,
 }: {
   label: string;
   value: string | number;
@@ -77,6 +78,7 @@ export function Kpi({
   icon?: ReactNode;
   accent?: "primary" | "success" | "warning" | "error" | "info";
   className?: string;
+  onClick?: () => void;
 }) {
   const accentBar = {
     primary: "border-t-primary",
@@ -92,14 +94,8 @@ export function Kpi({
     error: "bg-error-muted text-error",
     info: "bg-info-muted text-info",
   } as const;
-  return (
-    <div
-      className={cn(
-        "rounded-xl border border-border bg-card p-3.5 shadow-[var(--shadow-card)] md:p-4",
-        accent ? cn("border-t-[3px]", accentBar[accent]) : null,
-        className
-      )}
-    >
+  const Comp = onClick ? "button" : "div";
+  const inner = (
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</div>
@@ -117,8 +113,21 @@ export function Kpi({
           </div>
         ) : null}
       </div>
-    </div>
   );
+  const box = cn(
+    "rounded-xl border border-border bg-card p-3.5 shadow-[var(--shadow-card)] md:p-4",
+    accent ? cn("border-t-[3px]", accentBar[accent]) : null,
+    onClick ? "w-full cursor-pointer text-left transition-colors hover:border-primary/50 hover:bg-muted/40" : null,
+    className
+  );
+  if (onClick) {
+    return (
+      <button type="button" onClick={onClick} className={box}>
+        {inner}
+      </button>
+    );
+  }
+  return <div className={box}>{inner}</div>;
 }
 
 export function PageHeader({ title, help }: { title: string; help?: string }) {

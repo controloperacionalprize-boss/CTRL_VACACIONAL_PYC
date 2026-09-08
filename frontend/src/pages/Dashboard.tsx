@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   Bar,
   BarChart,
@@ -17,7 +18,7 @@ import {
 import { api, qs } from "../api";
 import { useApp } from "../state";
 import { Alert, Kpi, PageHeader } from "../components/ui";
-import { CalendarDays, Percent, UserCheck, Users, UserX } from "lucide-react";
+import { CalendarClock, CalendarDays, Inbox, Percent, UserCheck, Users, UserX } from "lucide-react";
 
 type Dash = {
   total_people: number;
@@ -55,6 +56,7 @@ function pctLabel(n: number, total: number) {
 
 export function DashboardPage() {
   const { filters } = useApp();
+  const navigate = useNavigate();
   const [data, setData] = useState<Dash | null>(null);
   const [loadError, setLoadError] = useState("");
   const params = useMemo(
@@ -142,7 +144,14 @@ export function DashboardPage() {
       <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
         <Kpi label="Trabajadores" value={data.total_people} hint="Personas en este filtro" icon={<Users size={18} strokeWidth={1.75} />} />
         <Kpi label="Programados" value={data.programados} hint={`Aptos con vacaciones en ${filters.year}`} icon={<UserCheck size={18} strokeWidth={1.75} />} />
-        <Kpi label="Sin programar" value={data.pendientes} hint="Aptos aún sin días" icon={<UserX size={18} strokeWidth={1.75} />} />
+        <Kpi
+          label="Sin programar"
+          value={data.pendientes}
+          hint="Aptos aún sin días"
+          icon={<UserX size={18} strokeWidth={1.75} />}
+          accent={data.pendientes ? "warning" : undefined}
+          onClick={() => navigate("/alertas?tipo=sin_programar")}
+        />
         <Kpi label="Días" value={data.dias_totales} hint="Suma de aptos" icon={<CalendarDays size={18} strokeWidth={1.75} />} />
         <Kpi
           label="Cobertura %"
@@ -152,6 +161,8 @@ export function DashboardPage() {
           className="col-span-2 md:col-span-1"
         />
       </div>
+
+      <AlertasGestion />
 
       <section className="rounded-xl border border-border bg-card p-4 shadow-[var(--shadow-card)]">
         <h3 className="mb-3 text-[13px] font-semibold">Personas de vacaciones por día</h3>
@@ -317,5 +328,70 @@ export function DashboardPage() {
         </table>
       </section>
     </div>
+  );
+}
+
+function AlertasGestion() {
+  const { alerts, alertsError } = useApp();
+  const navigate = useNavigate();
+  const r = alerts?.resumen;
+  if (alertsError || !r) return null;
+  const mes = alerts.mes_siguiente_label || "el próximo mes";
+  const cards = [
+    {
+      label: "Récords próximos a vencer",
+      value: r.records_90,
+      hint: "En los siguientes 3 meses",
+      to: "/alertas?tipo=record_vence",
+      icon: <CalendarClock size={18} strokeWidth={1.75} />,
+      accent: r.records_90 ? ("warning" as const) : undefined,
+    },
+    {
+      label: `Vacaciones en ${mes}`,
+      value: r.vacaciones_mes_siguiente,
+      hint: alerts.ultima_semana_mes ? "Última semana del mes: revisa el equipo que sale" : "Personas con días programados el mes siguiente",
+      to: alerts.ultima_semana_mes ? "/alertas?tipo=mes_siguiente" : `/?alerta=mes_siguiente&mes=${alerts.mes_siguiente}`,
+      icon: <CalendarDays size={18} strokeWidth={1.75} />,
+      accent: alerts.ultima_semana_mes && r.vacaciones_mes_siguiente ? ("warning" as const) : undefined,
+    },
+    {
+      label: "Planificaciones pendientes",
+      value: r.pendientes_plan,
+      hint: "Esperan tu acción en Bandeja",
+      to: r.pendientes_plan ? "/validaciones" : "/alertas?tipo=pendientes_flujo",
+      icon: <Inbox size={18} strokeWidth={1.75} />,
+      accent: r.pendientes_plan ? ("error" as const) : undefined,
+    },
+    {
+      label: "Casos sin programación",
+      value: r.sin_programar,
+      hint: "Aptos sin ningún día marcado",
+      to: "/alertas?tipo=sin_programar",
+      icon: <UserX size={18} strokeWidth={1.75} />,
+      accent: r.sin_programar ? ("warning" as const) : undefined,
+    },
+  ];
+  return (
+    <section>
+      <div className="mb-3 flex items-end justify-between gap-3">
+        <div>
+          <h3 className="text-[13px] font-semibold">Alertas de gestión</h3>
+          <p className="mt-0.5 text-[12px] text-muted-foreground">Indicadores de tu alcance. Entra al listado ya filtrado.</p>
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        {cards.map((c) => (
+          <Kpi
+            key={c.label}
+            label={c.label}
+            value={c.value}
+            hint={c.hint}
+            icon={c.icon}
+            accent={c.accent}
+            onClick={() => navigate(c.to)}
+          />
+        ))}
+      </div>
+    </section>
   );
 }

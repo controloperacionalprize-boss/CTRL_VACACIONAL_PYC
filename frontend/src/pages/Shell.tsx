@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { NavLink, Outlet } from "react-router-dom";
 import {
+  Bell,
   Calendar,
   CalendarRange,
   FileSpreadsheet,
@@ -15,6 +16,8 @@ import {
 import { useApp } from "../state";
 import { Button, cn, Field, Select } from "../components/ui";
 import { EmpAvatar } from "../components/EmpAvatar";
+import { NotificationsBell } from "../components/NotificationsCenter";
+import { inboxItems, pendingBadgeCount } from "../lib/alerts";
 
 function Multi({
   label,
@@ -43,11 +46,12 @@ function Multi({
 }
 
 const NAV = [
-  { to: "/", end: true, label: "Planificación", short: "Plan", Icon: CalendarRange },
-  { to: "/validaciones", end: false, label: "Bandeja", short: "Bandeja", Icon: Inbox },
-  { to: "/dashboard", end: false, label: "Dashboard", short: "Dash", Icon: LayoutDashboard },
-  { to: "/record-vacacional", end: false, label: "Récord vacacional", short: "Récord", Icon: Calendar },
-  { to: "/exportar", end: false, label: "Exportar", short: "Excel", Icon: FileSpreadsheet },
+  { to: "/", end: true, label: "Planificación", short: "Plan", Icon: CalendarRange, mobile: true },
+  { to: "/validaciones", end: false, label: "Bandeja", short: "Bandeja", Icon: Inbox, mobile: true },
+  { to: "/alertas", end: false, label: "Alertas", short: "Alertas", Icon: Bell, mobile: true },
+  { to: "/dashboard", end: false, label: "Dashboard", short: "Dash", Icon: LayoutDashboard, mobile: true },
+  { to: "/record-vacacional", end: false, label: "Récord vacacional", short: "Récord", Icon: Calendar, mobile: false },
+  { to: "/exportar", end: false, label: "Exportar", short: "Excel", Icon: FileSpreadsheet, mobile: false },
 ] as const;
 
 function FiltersBlock({
@@ -86,7 +90,8 @@ function FiltersBlock({
 }
 
 export function Shell() {
-  const { user, logout, filters } = useApp();
+  const { user, logout, filters, alerts, inbox } = useApp();
+  const alertBadge = pendingBadgeCount(inboxItems(alerts?.items || []), inbox);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const display = user?.nombre_persona || user?.nombre_usuario || "";
@@ -138,6 +143,11 @@ export function Shell() {
                 <>
                   <Icon size={16} strokeWidth={1.75} className={isActive ? "text-primary" : "text-muted-foreground"} />
                   <span className="text-[13px] leading-none">{label}</span>
+                  {to === "/alertas" && alertBadge > 0 ? (
+                    <span className="ml-auto flex h-5 min-w-5 items-center justify-center rounded-full bg-error px-1.5 text-[10px] font-semibold text-error-foreground">
+                      {alertBadge > 9 ? "9+" : alertBadge}
+                    </span>
+                  ) : null}
                 </>
               )}
             </NavLink>
@@ -194,6 +204,7 @@ export function Shell() {
                 : ` · ${user?.division || user?.gerencia}`}
           </p>
           <div className="flex shrink-0 items-center gap-1.5">
+            <NotificationsBell />
             <Button
               variant="outline"
               className="h-9 px-2.5 md:hidden"
@@ -223,14 +234,14 @@ export function Shell() {
 
         <nav className="pointer-events-none fixed inset-x-0 bottom-0 z-40 px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] md:hidden">
           <div className="pointer-events-auto mx-auto flex h-14 max-w-lg items-center justify-around rounded-full border border-border bg-card/95 px-1.5 shadow-[0_4px_20px_#0f1c2e1a] backdrop-blur">
-            {NAV.map(({ to, end, short, Icon }) => (
+            {NAV.filter((item) => item.mobile).map(({ to, end, short, Icon }) => (
               <NavLink
                 key={to}
                 to={to}
                 end={end}
                 className={({ isActive }) =>
                   cn(
-                    "flex h-11 w-14 flex-col items-center justify-center gap-0.5 rounded-full no-underline transition-colors",
+                    "relative flex h-11 w-14 flex-col items-center justify-center gap-0.5 rounded-full no-underline transition-colors",
                     isActive ? "bg-[var(--primary-soft)] text-primary" : "text-muted-foreground"
                   )
                 }
@@ -239,6 +250,9 @@ export function Shell() {
                   <>
                     <Icon size={18} strokeWidth={isActive ? 2 : 1.75} />
                     <span className={cn("text-[10px] leading-none", isActive ? "font-semibold" : "font-medium")}>{short}</span>
+                    {to === "/alertas" && alertBadge > 0 ? (
+                      <span className="absolute right-1.5 top-0.5 h-1.5 w-1.5 rounded-full bg-error" />
+                    ) : null}
                   </>
                 )}
               </NavLink>
@@ -290,6 +304,17 @@ export function Shell() {
                 <p className="truncate text-[12px] text-muted-foreground">{user?.correo}</p>
               </div>
             </div>
+            {NAV.filter((item) => !item.mobile).map(({ to, label, Icon }) => (
+              <NavLink
+                key={to}
+                to={to}
+                onClick={() => setMoreOpen(false)}
+                className="mb-2 flex items-center gap-2.5 rounded-[10px] px-3 py-3 text-[13px] font-semibold text-foreground no-underline hover:bg-muted"
+              >
+                <Icon size={16} strokeWidth={1.75} />
+                {label}
+              </NavLink>
+            ))}
             {user?.is_admin ? (
               <NavLink
                 to="/admin"

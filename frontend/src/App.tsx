@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { api, qs } from "./api";
 import { Login } from "./pages/Login";
@@ -9,7 +9,9 @@ import { CalendarPage } from "./pages/Calendar";
 import { ExportPage } from "./pages/Export";
 import { ValidacionesPage } from "./pages/Validaciones";
 import { AdminPage } from "./pages/Admin";
+import { AlertasPage } from "./pages/Alertas";
 import { AppCtx, type Filters, type User } from "./state";
+import { inboxItems, syncInbox, type AlertsPayload, type InboxEntry } from "./lib/alerts";
 
 const yearNow = new Date().getFullYear();
 
@@ -23,11 +25,43 @@ export function App() {
     gerencias: ["TODAS"],
     areas: ["TODAS"],
   });
+  const [alerts, setAlerts] = useState<AlertsPayload | null>(null);
+  const [alertsError, setAlertsError] = useState("");
+  const [inbox, setInbox] = useState<Record<string, InboxEntry>>({});
+
+  const alertQuery = useMemo(
+    () => ({
+      year: filters.year,
+      empresa: filters.empresas.includes("TODAS") ? undefined : filters.empresas,
+      gerencia: filters.gerencias.includes("TODAS") ? undefined : filters.gerencias,
+      area: filters.areas.includes("TODAS") ? undefined : filters.areas,
+    }),
+    [filters]
+  );
 
   function logout() {
     localStorage.removeItem("vac_token");
     setUser(null);
+    setAlerts(null);
+    setAlertsError("");
+    setInbox({});
   }
+
+  const reloadAlerts = useCallback(() => {
+    if (!user) {
+      setAlerts(null);
+      return;
+    }
+    api<AlertsPayload>(`/api/alerts${qs(alertQuery)}`)
+      .then((data) => {
+        setAlerts(data);
+        setAlertsError("");
+        setInbox(syncInbox(user.correo, filters.year, inboxItems(data.items)));
+      })
+      .catch((e) => {
+        setAlertsError(e instanceof Error ? e.message : "No se pudieron cargar las alertas.");
+      });
+  }, [user, alertQuery, filters.year]);
 
   useEffect(() => {
     const token = localStorage.getItem("vac_token");
@@ -68,10 +102,41 @@ export function App() {
     });
   }, [user, filters.empresas, filters.gerencias, filters.areas]);
 
+  useEffect(() => {
+    if (!user) return;
+    reloadAlerts();
+  }, [user, reloadAlerts]);
+
+  useEffect(() => {
+    if (!user) return;
+    const onFocus = () => reloadAlerts();
+    window.addEventListener("focus", onFocus);
+    const timer = window.setInterval(reloadAlerts, 5 * 60 * 1000);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      window.clearInterval(timer);
+    };
+  }, [user, reloadAlerts]);
+
   if (!ready) return <div className="p-10 text-sm text-muted-foreground">Abriendo la aplicación…</div>;
 
   return (
-    <AppCtx.Provider value={{ user, setUser, logout, filters, setFilters, options, setOptions }}>
+    <AppCtx.Provider
+      value={{
+        user,
+        setUser,
+        logout,
+        filters,
+        setFilters,
+        options,
+        setOptions,
+        alerts,
+        alertsError,
+        inbox,
+        setInbox,
+        reloadAlerts,
+      }}
+    >
       {!user ? (
         <Login
           onLogin={(token, u) => {
@@ -89,6 +154,7 @@ export function App() {
             <Route path="/calendario" element={<Navigate to="/record-vacacional" replace />} />
             <Route path="/exportar" element={<ExportPage />} />
             <Route path="/validaciones" element={<ValidacionesPage />} />
+            <Route path="/alertas" element={<AlertasPage />} />
             <Route path="/admin" element={<AdminPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>

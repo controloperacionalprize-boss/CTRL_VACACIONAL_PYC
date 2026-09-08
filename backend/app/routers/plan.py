@@ -1,7 +1,7 @@
 from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import Response
+from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel, field_validator
 
 from ..auth import get_current_user
@@ -38,10 +38,9 @@ from ..domain.documents import (
     TITULOS,
     build_context,
     documento_meta,
-    filename_for,
-    fill_template,
     reconstruct_old_periods,
 )
+from ..domain.documents_pdf import filename_pdf, render_html, render_pdf
 from ..domain.plan import log_change, persist_employee, sparse_weeks, validate_plan
 from ..domain.workflow import enrich_workers, flujo_from_row, load_flujos, reject_if_cannot_edit
 from ..services import get_employee, list_employees, load_scope_plan
@@ -646,6 +645,7 @@ class DocumentoIn(BaseModel):
     days: int
     fin: date | None = None
     old_start: date | None = None
+    formato: str = "pdf"
 
     @field_validator("escenario")
     @classmethod
@@ -653,6 +653,14 @@ class DocumentoIn(BaseModel):
         if v not in TITULOS:
             raise ValueError("Escenario de documento no válido.")
         return v
+
+    @field_validator("formato")
+    @classmethod
+    def formato_ok(cls, v: str) -> str:
+        raw = (v or "pdf").strip().lower()
+        if raw not in {"pdf", "html"}:
+            raise ValueError("Formato de documento no válido.")
+        return raw
 
 
 @router.post("/documento")
@@ -685,14 +693,13 @@ def generar_documento(body: DocumentoIn, user: dict = Depends(get_current_user))
         periodos_anteriores=anteriores,
         programmed=programmed,
     )
-    try:
-        data = fill_template(body.escenario, ctx)
-    except FileNotFoundError as exc:
-        raise HTTPException(500, "No está la plantilla Word en el servidor.") from exc
-    name = filename_for(body.escenario, ctx)
+    formato = (body.formato or "pdf").strip().lower()
+    if formato == "html":
+        return HTMLResponse(render_html(body.escenario, ctx))
+    name = filename_pdf(body.escenario, ctx)
     return Response(
-        content=data,
-        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        content=render_pdf(body.escenario, ctx),
+        media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{name}"'},
     )
 

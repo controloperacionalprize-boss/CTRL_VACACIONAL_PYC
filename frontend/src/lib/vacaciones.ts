@@ -63,7 +63,7 @@ export function etiquetaEstado(estado: string) {
   return "Programado";
 }
 
-/** Mismos escenarios que el Word (memorando / fraccionamiento / adelanto). */
+/** Mismos escenarios que el PDF GTH (memorando / fraccionamiento / adelanto). */
 export function escenarioDe(adelanto: boolean, sizes: number[], tope: number = MAX_VAC_DAYS) {
   if (adelanto) {
     return {

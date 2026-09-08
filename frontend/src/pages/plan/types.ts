@@ -5,6 +5,7 @@ export type Worker = {
   division: string;
   gerencia: string;
   area: string;
+  jefatura?: string;
   cargo_actual: string;
   fecha_ingreso: string | null;
   tipo_personal: string;

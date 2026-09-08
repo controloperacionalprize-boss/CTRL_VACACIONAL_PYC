@@ -1,4 +1,5 @@
 import { createContext, useContext } from "react";
+import type { AlertsPayload, InboxEntry } from "./lib/alerts";
 
 export type User = {
   correo: string;
@@ -30,6 +31,11 @@ export type AppState = {
   setFilters: (f: Filters) => void;
   options: { empresas: string[]; gerencias: string[]; areas: string[] };
   setOptions: (o: AppState["options"]) => void;
+  alerts: AlertsPayload | null;
+  alertsError: string;
+  inbox: Record<string, InboxEntry>;
+  setInbox: (m: Record<string, InboxEntry>) => void;
+  reloadAlerts: () => void;
 };
 
 export const AppCtx = createContext<AppState | null>(null);

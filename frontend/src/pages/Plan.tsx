@@ -1,5 +1,6 @@
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
-import { api, downloadFile, qs } from "../api";
+import { useSearchParams } from "react-router-dom";
+import { api, downloadFile, fetchFile, qs } from "../api";
 import { addDaysIso, formatDayLabel, formatFechaIso, inclusiveDays, localTodayIso } from "../lib/dates";
 import { SEM_COLORS, weekLocked } from "../lib/semaforo";
 import {
@@ -13,9 +14,10 @@ import {
   topeDe,
 } from "../lib/vacaciones";
 import { useApp } from "../state";
+import { findAlert } from "../lib/alerts";
 import { Alert, Button, cn, EmptyState, Field, Input, Kpi, PageHeader } from "../components/ui";
 import { EmpAvatar } from "../components/EmpAvatar";
-import { CalendarClock, CalendarDays, CalendarPlus, CalendarRange, FileDown, Users, UserCheck, UserX } from "lucide-react";
+import { CalendarClock, CalendarDays, CalendarPlus, CalendarRange, Eye, FileDown, Users, UserCheck, UserX } from "lucide-react";
 import { FlujoBadge, lockReasonFor, WorkerCard, WorkerRow } from "./plan/WorkerGrid";
 import { JefeEquipo } from "./plan/JefeEquipo";
 import type { DocumentoMeta, DocReady, Plan, VacPeriod, WeekDay, Worker } from "./plan/types";
@@ -137,7 +139,12 @@ function weeksFromApi(res: { weeks?: Record<string, number> }, fallbackWeek: num
 
 
 export function PlanPage() {
-  const { filters, user } = useApp();
+  const { filters, user, alerts } = useApp();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const alertaTipo = searchParams.get("alerta");
+  const alertaMes = searchParams.get("mes");
+  const alertaDni = searchParams.get("dni");
+  const alertaActiva = findAlert(alerts, alertaTipo, alertaMes);
   const [plan, setPlan] = useState<Plan | null>(null);
   const [q, setQ] = useState("");
   const deferredQ = useDeferredValue(q);
@@ -182,6 +189,7 @@ export function PlanPage() {
   const [docReady, setDocReady] = useState<DocReady | null>(null);
   const [docBusy, setDocBusy] = useState(false);
   const [docError, setDocError] = useState("");
+  const [docPreviewUrl, setDocPreviewUrl] = useState<string | null>(null);
   const [enviando, setEnviando] = useState(false);
   const [jefeFormOpen, setJefeFormOpen] = useState(false);
 
@@ -224,6 +232,12 @@ export function PlanPage() {
     return () => document.removeEventListener("mousedown", onDocClick);
   }, []);
 
+  useEffect(() => {
+    return () => {
+      if (docPreviewUrl) URL.revokeObjectURL(docPreviewUrl);
+    };
+  }, [docPreviewUrl]);
+
   const lockedWeeks = useMemo(() => {
     if (!plan) return [];
     return Array.from({ length: plan.total_semanas }, (_, i) =>
@@ -248,16 +262,25 @@ export function PlanPage() {
     () =>
       gridWorkers.map((w) => ({
         w,
-        hay: `${w.nombre} ${w.dni} ${w.area} ${w.tipo_personal} ${w.division} ${w.gerencia}`.toLowerCase(),
+        hay: `${w.nombre} ${w.dni} ${w.area} ${w.jefatura || ""} ${w.tipo_personal} ${w.division} ${w.gerencia}`.toLowerCase(),
       })),
     [gridWorkers]
   );
 
+  const alertaDnis = useMemo(() => {
+    if (!alertaTipo) return null;
+    if (alertaDni) return new Set([alertaDni]);
+    if (!alertaActiva) return null;
+    return new Set(alertaActiva.personas.map((p) => p.dni));
+  }, [alertaTipo, alertaDni, alertaActiva]);
+
   const visible = useMemo(() => {
+    const base = alertaDnis ? gridWorkers.filter((w) => alertaDnis.has(w.dni)) : gridWorkers;
     const terms = deferredQ.trim().toLowerCase().split(/\s+/).filter(Boolean);
-    if (!terms.length) return gridWorkers;
-    return searchIndex.filter((row) => terms.every((t) => row.hay.includes(t))).map((row) => row.w);
-  }, [deferredQ, gridWorkers, searchIndex]);
+    if (!terms.length) return base;
+    const hay = new Set(base.map((w) => w.dni));
+    return searchIndex.filter((row) => hay.has(row.w.dni) && terms.every((t) => row.hay.includes(t))).map((row) => row.w);
+  }, [deferredQ, gridWorkers, searchIndex, alertaDnis]);
 
   const consecMatches = useMemo(() => {
     const workers = (plan?.workers || []).filter((w) => user?.is_admin || esAptoPlan(w));
@@ -294,6 +317,13 @@ export function PlanPage() {
       programFormRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
     });
   }
+
+  useEffect(() => {
+    if (!alertaDni || !plan) return;
+    const w = plan.workers.find((x) => x.dni === alertaDni);
+    if (w && consec.dni !== w.dni) pickConsec(w);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [alertaDni, plan, consec.dni]);
 
   function patchFechas(partial: { start?: string; end?: string }) {
     const minDay = plan?.today || localTodayIso();
@@ -815,6 +845,27 @@ export function PlanPage() {
     }
   }
 
+  async function pedirDocumento(formato: "pdf" | "html") {
+    if (!docReady) throw new Error("No hay documento listo.");
+    return fetchFile(
+      "/api/plan/documento",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          year: docReady.year,
+          dni: docReady.dni,
+          escenario: docReady.escenario,
+          start_date: docReady.start_date,
+          days: docReady.days,
+          fin: docReady.fin,
+          old_start: docReady.old_start,
+          formato,
+        }),
+      },
+      formato === "pdf" ? "vacaciones.pdf" : "vacaciones.html"
+    );
+  }
+
   async function descargarDocumento() {
     if (!docReady) return;
     setDocBusy(true);
@@ -832,12 +883,30 @@ export function PlanPage() {
             days: docReady.days,
             fin: docReady.fin,
             old_start: docReady.old_start,
+            formato: "pdf",
           }),
         },
-        "vacaciones.docx"
+        "vacaciones.pdf"
       );
     } catch (e) {
-      setDocError(e instanceof Error ? e.message : "No se pudo descargar el documento.");
+      setDocError(e instanceof Error ? e.message : "No se pudo descargar el PDF.");
+    } finally {
+      setDocBusy(false);
+    }
+  }
+
+  async function verDocumento() {
+    if (!docReady) return;
+    setDocBusy(true);
+    setDocError("");
+    try {
+      const { blob } = await pedirDocumento("pdf");
+      setDocPreviewUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return URL.createObjectURL(blob);
+      });
+    } catch (e) {
+      setDocError(e instanceof Error ? e.message : "No se pudo abrir la vista previa.");
     } finally {
       setDocBusy(false);
     }
@@ -913,6 +982,10 @@ export function PlanPage() {
         ? "No tiene un período futuro para mover."
         : undefined;
 
+  const personaAlerta =
+    alertaDni && alertaActiva ? alertaActiva.personas.find((p) => p.dni === alertaDni) || null : null;
+  const kpisVista = alertaTipo ? kpisFrom(visible) : { ...plan.kpis, trabajadores: gridWorkers.length };
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -926,6 +999,29 @@ export function PlanPage() {
         }
       />
 
+      {alertaTipo ? (
+        <div className="flex flex-col gap-3 rounded-xl border border-border bg-card p-4 shadow-[var(--shadow-card)] sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0">
+            <p className="text-[15px] font-semibold">{alertaActiva?.titulo || "Filtro de alerta"}</p>
+            <p className="mt-1 text-[13px] text-muted-foreground">
+              {personaAlerta
+                ? `${personaAlerta.nombre} (${personaAlerta.area || "sin área"}): ${personaAlerta.estado_plan}.`
+                : alertaActiva?.descripcion || "Mostrando las personas de esta alerta."}
+            </p>
+            {alertaActiva?.responsable ? (
+              <p className="mt-1 text-[12px] text-muted-foreground">Quién actúa: {alertaActiva.responsable}</p>
+            ) : null}
+          </div>
+          <Button
+            variant="outline"
+            className="shrink-0"
+            onClick={() => setSearchParams({}, { replace: true })}
+          >
+            Quitar filtro
+          </Button>
+        </div>
+      ) : null}
+
       {error ? (
         <Alert tone="error" title="No se puede programar">
           {error}
@@ -935,7 +1031,16 @@ export function PlanPage() {
         <Alert tone="success" title="Guardado">
           <p>{ok}</p>
           {docReady ? (
-            <div className="mt-3">
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Button
+                variant="outline"
+                className="h-9 bg-card"
+                disabled={docBusy}
+                onClick={() => void verDocumento()}
+              >
+                <Eye size={16} strokeWidth={1.75} />
+                {docBusy ? "Preparando…" : "Ver PDF"}
+              </Button>
               <Button
                 variant="outline"
                 className="h-9 bg-card"
@@ -943,10 +1048,10 @@ export function PlanPage() {
                 onClick={() => void descargarDocumento()}
               >
                 <FileDown size={16} strokeWidth={1.75} />
-                {docBusy ? "Preparando Word…" : `Descargar ${docReady.titulo}`}
+                {docBusy ? "Preparando PDF…" : `Descargar ${docReady.titulo}`}
               </Button>
-              <p className="mt-1.5 text-[11px] text-muted-foreground">
-                Sale con los datos del trabajador y las fechas programadas. Solo falta imprimir y firmar.
+              <p className="mt-1.5 w-full text-[11px] text-muted-foreground">
+                Sale en PDF, listo para imprimir y firmar. Puedes revisar la vista previa antes de bajarlo.
               </p>
             </div>
           ) : null}
@@ -955,10 +1060,10 @@ export function PlanPage() {
       ) : null}
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4 md:gap-4">
-        <Kpi label="Trabajadores" value={gridWorkers.length} hint="Aptos para vacaciones" icon={<Users size={18} strokeWidth={1.75} />} />
-        <Kpi label="Programados" value={plan.kpis.programados} hint="Aptos con vacaciones" icon={<UserCheck size={18} strokeWidth={1.75} />} />
-        <Kpi label="Sin programación" value={plan.kpis.pendientes} hint={`Aptos aún sin días en ${plan.year}`} icon={<UserX size={18} strokeWidth={1.75} />} />
-        <Kpi label="Días programados" value={plan.kpis.dias} hint="Suma de aptos" icon={<CalendarDays size={18} strokeWidth={1.75} />} />
+        <Kpi label="Trabajadores" value={kpisVista.trabajadores} hint={alertaTipo ? "En esta alerta" : "Aptos para vacaciones"} icon={<Users size={18} strokeWidth={1.75} />} />
+        <Kpi label="Programados" value={kpisVista.programados} hint="Aptos con vacaciones" icon={<UserCheck size={18} strokeWidth={1.75} />} />
+        <Kpi label="Sin programación" value={kpisVista.pendientes} hint={`Aptos aún sin días en ${plan.year}`} icon={<UserX size={18} strokeWidth={1.75} />} />
+        <Kpi label="Días programados" value={kpisVista.dias} hint="Suma de aptos" icon={<CalendarDays size={18} strokeWidth={1.75} />} />
       </div>
 
       {isJefe ? (
@@ -1686,6 +1791,35 @@ export function PlanPage() {
                 {modalSaving ? "Guardando…" : "Guardar"}
               </Button>
             </div>
+          </div>
+        </div>
+      ) : null}
+
+      {docPreviewUrl ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="flex h-[min(92vh,980px)] w-full max-w-4xl flex-col overflow-hidden rounded-xl border border-border bg-card shadow-[var(--shadow-card)]">
+            <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
+              <p className="text-sm font-semibold">{docReady?.titulo || "Documento GTH"}</p>
+              <div className="flex gap-2">
+                <Button variant="outline" className="h-9" disabled={docBusy} onClick={() => void descargarDocumento()}>
+                  <FileDown size={16} strokeWidth={1.75} />
+                  Descargar PDF
+                </Button>
+                <Button
+                  variant="ghost"
+                  className="h-9"
+                  onClick={() =>
+                    setDocPreviewUrl((prev) => {
+                      if (prev) URL.revokeObjectURL(prev);
+                      return null;
+                    })
+                  }
+                >
+                  Cerrar
+                </Button>
+              </div>
+            </div>
+            <iframe title="Vista previa del documento" className="min-h-0 flex-1 bg-muted" src={docPreviewUrl} />
           </div>
         </div>
       ) : null}

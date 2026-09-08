@@ -43,6 +43,7 @@ temp/
 backend/.msal_attendance_cache.bin
 .msal_*.bin
 backend/tests/_*.docx
+backend/app/data/preview/
 
 # --- OS / editores ---
 .DS_Store

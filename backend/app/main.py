@@ -16,6 +16,7 @@ from .routers.admin import router as admin_router
 # Módulo de Asistencia: en construcción, aún no listo para producción.
 # No se registra el router ni se corre su migración hasta retomarlo.
 # from .routers.asistencia import router as asistencia_router
+from .routers.alerts import router as alerts_router
 from .routers.auth import router as auth_router
 from .routers.catalog import router as catalog_router
 from .routers.dashboard import router as dashboard_router
@@ -24,7 +25,7 @@ from .routers.reports import router as reports_router
 from .routers.workflow import router as workflow_router
 
 # Cambia con cada fix de deploy para verificar en /api/version qué código está vivo.
-DEPLOY_MARK = "plan-sparse-weeks"
+DEPLOY_MARK = "alerts-center"
 
 
 logger = logging.getLogger(__name__)
@@ -69,6 +70,7 @@ app.include_router(admin_router)
 app.include_router(catalog_router)
 app.include_router(plan_router)
 app.include_router(workflow_router)
+app.include_router(alerts_router)
 app.include_router(dashboard_router)
 # app.include_router(asistencia_router)  # deshabilitado: módulo en construcción
 app.include_router(reports_router)

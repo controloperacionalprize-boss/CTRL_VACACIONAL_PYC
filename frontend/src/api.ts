@@ -3,7 +3,7 @@ import { formatApiError } from "./lib/apiError";
 export const API = import.meta.env.VITE_API_URL || "";
 
 // Evita que la UI quede "colgada" para siempre si el backend no responde
-// (caída, red lenta, etc.). Las exportaciones a Excel / Word necesitan más margen.
+// (caída, red lenta, etc.). Las exportaciones a Excel / PDF necesitan más margen.
 const DEFAULT_TIMEOUT_MS = 20_000;
 const LONG_TIMEOUT_MS = 60_000;
 
@@ -91,13 +91,21 @@ function filenameFromDisposition(header: string | null, fallback: string) {
   return fallback;
 }
 
-export async function downloadFile(path: string, init: RequestInit = {}, fallbackName = "descarga") {
+export async function fetchFile(path: string, init: RequestInit = {}, fallbackName = "descarga") {
   const res = await request(path, init);
   const blob = await res.blob();
+  return {
+    blob,
+    filename: filenameFromDisposition(res.headers.get("content-disposition"), fallbackName),
+  };
+}
+
+export async function downloadFile(path: string, init: RequestInit = {}, fallbackName = "descarga") {
+  const { blob, filename } = await fetchFile(path, init, fallbackName);
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = filenameFromDisposition(res.headers.get("content-disposition"), fallbackName);
+  a.download = filename;
   a.click();
   URL.revokeObjectURL(url);
 }
