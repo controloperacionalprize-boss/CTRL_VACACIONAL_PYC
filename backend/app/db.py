@@ -145,6 +145,21 @@ def ensure_scope_columns() -> None:
         cur.execute(
             "CREATE INDEX IF NOT EXISTS idx_plan_flujo_estado ON plan_flujo (anio, estado)"
         )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS plan_documento_emision (
+                anio INTEGER NOT NULL,
+                dni TEXT NOT NULL,
+                escenario INTEGER NOT NULL,
+                plan_hash TEXT NOT NULL DEFAULT '',
+                descargas INTEGER NOT NULL DEFAULT 0,
+                descargado_at TIMESTAMPTZ,
+                descargado_por TEXT NOT NULL DEFAULT '',
+                descargado_nombre TEXT NOT NULL DEFAULT '',
+                PRIMARY KEY (anio, dni)
+            )
+            """
+        )
 
 
 @contextmanager

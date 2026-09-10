@@ -10,6 +10,7 @@ import { ExportPage } from "./pages/Export";
 import { ValidacionesPage } from "./pages/Validaciones";
 import { AdminPage } from "./pages/Admin";
 import { AlertasPage } from "./pages/Alertas";
+import { DocumentosPage } from "./pages/Documentos";
 import { AppCtx, type Filters, type User } from "./state";
 import { inboxItems, syncInbox, type AlertsPayload, type InboxEntry } from "./lib/alerts";
 
@@ -155,6 +156,7 @@ export function App() {
             <Route path="/exportar" element={<ExportPage />} />
             <Route path="/validaciones" element={<ValidacionesPage />} />
             <Route path="/alertas" element={<AlertasPage />} />
+            <Route path="/documentos" element={<DocumentosPage />} />
             <Route path="/admin" element={<AdminPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>

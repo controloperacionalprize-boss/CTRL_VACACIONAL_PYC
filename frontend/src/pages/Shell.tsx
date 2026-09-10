@@ -5,6 +5,7 @@ import {
   Calendar,
   CalendarRange,
   FileSpreadsheet,
+  FileText,
   Inbox,
   LayoutDashboard,
   LogOut,
@@ -46,13 +47,23 @@ function Multi({
 }
 
 const NAV = [
-  { to: "/", end: true, label: "Planificación", short: "Plan", Icon: CalendarRange, mobile: true },
-  { to: "/validaciones", end: false, label: "Bandeja", short: "Bandeja", Icon: Inbox, mobile: true },
-  { to: "/alertas", end: false, label: "Alertas", short: "Alertas", Icon: Bell, mobile: true },
-  { to: "/dashboard", end: false, label: "Dashboard", short: "Dash", Icon: LayoutDashboard, mobile: true },
-  { to: "/record-vacacional", end: false, label: "Récord vacacional", short: "Récord", Icon: Calendar, mobile: false },
-  { to: "/exportar", end: false, label: "Exportar", short: "Excel", Icon: FileSpreadsheet, mobile: false },
+  { to: "/", end: true, label: "Planificación", short: "Plan", Icon: CalendarRange, mobile: true, admin: false, group: "flujo" },
+  { to: "/validaciones", end: false, label: "Bandeja", short: "Bandeja", Icon: Inbox, mobile: true, admin: false, group: "flujo" },
+  { to: "/documentos", end: false, label: "Documentos", short: "Docs", Icon: FileText, mobile: false, admin: true, group: "flujo" },
+  { to: "/alertas", end: false, label: "Alertas", short: "Alertas", Icon: Bell, mobile: true, admin: false, group: "consulta" },
+  { to: "/dashboard", end: false, label: "Dashboard", short: "Dash", Icon: LayoutDashboard, mobile: true, admin: false, group: "consulta" },
+  { to: "/record-vacacional", end: false, label: "Récord vacacional", short: "Récord", Icon: Calendar, mobile: false, admin: false, group: "consulta" },
+  { to: "/exportar", end: false, label: "Exportar", short: "Excel", Icon: FileSpreadsheet, mobile: false, admin: false, group: "consulta" },
 ] as const;
+
+function navLinkClass(isActive: boolean) {
+  return cn(
+    "flex h-auto w-full items-center gap-2.5 rounded-[10px] px-3 py-2.5 no-underline transition-colors",
+    isActive
+      ? "bg-[var(--primary-soft)] font-semibold text-primary"
+      : "bg-transparent font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
+  );
+}
 
 function FiltersBlock({
   years,
@@ -125,20 +136,19 @@ export function Shell() {
         </div>
 
         <nav className="flex shrink-0 flex-col gap-0.5 p-3">
-          {NAV.map(({ to, end, label, Icon }) => (
-            <NavLink
-              key={to}
-              to={to}
-              end={end}
-              className={({ isActive }) =>
-                cn(
-                  "flex h-auto w-full items-center gap-2.5 rounded-[10px] px-3 py-2.5 no-underline transition-colors",
-                  isActive
-                    ? "bg-[var(--primary-soft)] font-semibold text-primary"
-                    : "bg-transparent font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
-                )
-              }
-            >
+          {NAV.filter((item) => item.group === "flujo" && (!item.admin || user?.is_admin)).map(({ to, end, label, Icon }) => (
+            <NavLink key={to} to={to} end={end} className={({ isActive }) => navLinkClass(isActive)}>
+              {({ isActive }) => (
+                <>
+                  <Icon size={16} strokeWidth={1.75} className={isActive ? "text-primary" : "text-muted-foreground"} />
+                  <span className="text-[13px] leading-none">{label}</span>
+                </>
+              )}
+            </NavLink>
+          ))}
+          <div className="mx-3 my-2 h-px bg-border" />
+          {NAV.filter((item) => item.group === "consulta").map(({ to, end, label, Icon }) => (
+            <NavLink key={to} to={to} end={end} className={({ isActive }) => navLinkClass(isActive)}>
               {({ isActive }) => (
                 <>
                   <Icon size={16} strokeWidth={1.75} className={isActive ? "text-primary" : "text-muted-foreground"} />
@@ -153,24 +163,17 @@ export function Shell() {
             </NavLink>
           ))}
           {user?.is_admin ? (
-            <NavLink
-              to="/admin"
-              className={({ isActive }) =>
-                cn(
-                  "flex h-auto w-full items-center gap-2.5 rounded-[10px] px-3 py-2.5 no-underline transition-colors",
-                  isActive
-                    ? "bg-[var(--primary-soft)] font-semibold text-primary"
-                    : "bg-transparent font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
-                )
-              }
-            >
-              {({ isActive }) => (
-                <>
-                  <Shield size={16} strokeWidth={1.75} className={isActive ? "text-primary" : "text-muted-foreground"} />
-                  <span className="text-[13px] leading-none">Admin</span>
-                </>
-              )}
-            </NavLink>
+            <>
+              <div className="mx-3 my-2 h-px bg-border" />
+              <NavLink to="/admin" className={({ isActive }) => navLinkClass(isActive)}>
+                {({ isActive }) => (
+                  <>
+                    <Shield size={16} strokeWidth={1.75} className={isActive ? "text-primary" : "text-muted-foreground"} />
+                    <span className="text-[13px] leading-none">Admin</span>
+                  </>
+                )}
+              </NavLink>
+            </>
           ) : null}
         </nav>
 
@@ -304,7 +307,21 @@ export function Shell() {
                 <p className="truncate text-[12px] text-muted-foreground">{user?.correo}</p>
               </div>
             </div>
-            {NAV.filter((item) => !item.mobile).map(({ to, label, Icon }) => (
+            {NAV.filter((item) => !item.mobile && item.group === "flujo" && (!item.admin || user?.is_admin)).map(
+              ({ to, label, Icon }) => (
+                <NavLink
+                  key={to}
+                  to={to}
+                  onClick={() => setMoreOpen(false)}
+                  className="mb-2 flex items-center gap-2.5 rounded-[10px] px-3 py-3 text-[13px] font-semibold text-foreground no-underline hover:bg-muted"
+                >
+                  <Icon size={16} strokeWidth={1.75} />
+                  {label}
+                </NavLink>
+              )
+            )}
+            {user?.is_admin ? <div className="mb-2 h-px bg-border" /> : null}
+            {NAV.filter((item) => !item.mobile && item.group === "consulta").map(({ to, label, Icon }) => (
               <NavLink
                 key={to}
                 to={to}
@@ -316,14 +333,17 @@ export function Shell() {
               </NavLink>
             ))}
             {user?.is_admin ? (
-              <NavLink
-                to="/admin"
-                onClick={() => setMoreOpen(false)}
-                className="mb-2 flex items-center gap-2.5 rounded-[10px] bg-[var(--primary-soft)] px-3 py-3 text-[13px] font-semibold text-primary no-underline"
-              >
-                <Shield size={16} strokeWidth={1.75} />
-                Administración
-              </NavLink>
+              <>
+                <div className="mb-2 h-px bg-border" />
+                <NavLink
+                  to="/admin"
+                  onClick={() => setMoreOpen(false)}
+                  className="mb-2 flex items-center gap-2.5 rounded-[10px] bg-[var(--primary-soft)] px-3 py-3 text-[13px] font-semibold text-primary no-underline"
+                >
+                  <Shield size={16} strokeWidth={1.75} />
+                  Administración
+                </NavLink>
+              </>
             ) : null}
             <Button
               variant="outline"

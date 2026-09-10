@@ -13,7 +13,13 @@ export function authHeader(): HeadersInit {
 }
 
 function timeoutFor(path: string) {
-  return path.includes("/export") || path.includes("/documento") || path.includes("/asistencia") || path.includes("/flujo/excel")
+  return (
+    path.includes("/export") ||
+    path.includes("/documento") ||
+    path.includes("/documentos") ||
+    path.includes("/asistencia") ||
+    path.includes("/flujo/excel")
+  )
     ? LONG_TIMEOUT_MS
     : DEFAULT_TIMEOUT_MS;
 }
