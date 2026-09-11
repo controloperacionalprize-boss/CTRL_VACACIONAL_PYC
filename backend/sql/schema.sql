@@ -131,7 +131,7 @@ CREATE TABLE IF NOT EXISTS plan_flujo (
 CREATE INDEX IF NOT EXISTS idx_plan_flujo_estado ON plan_flujo (anio, estado);
 CREATE INDEX IF NOT EXISTS idx_employees_area ON employees (area);
 
--- Emisión GTH: descarga de PDF de un plan ya RECEPCIONADO (no cambia el flujo).
+-- Emisión GTH: descarga de PDF de un plan ya RECEPCIONADO.
 CREATE TABLE IF NOT EXISTS plan_documento_emision (
     anio INTEGER NOT NULL,
     dni TEXT NOT NULL,

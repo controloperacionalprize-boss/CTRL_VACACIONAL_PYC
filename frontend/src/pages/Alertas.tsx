@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { ChevronDown, ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, FileSpreadsheet } from "lucide-react";
+import { downloadFile, qs } from "../api";
 import { useApp } from "../state";
 import { Alert, Button, EmptyState, Field, PageHeader, Select, cn } from "../components/ui";
 import { formatFechaIso } from "../lib/dates";
@@ -28,6 +29,15 @@ function uniqueSorted(values: string[]) {
 
 function personaJefe(p: AlertPersona) {
   return (p.jefe_nombre || p.jefatura || "").trim();
+}
+
+function scope(filters: ReturnType<typeof useApp>["filters"]) {
+  return {
+    year: filters.year,
+    empresa: filters.empresas.includes("TODAS") ? undefined : filters.empresas,
+    gerencia: filters.gerencias.includes("TODAS") ? undefined : filters.gerencias,
+    area: filters.areas.includes("TODAS") ? undefined : filters.areas,
+  };
 }
 
 type PersonaFiltro = "area" | "jefe" | "flujo";
@@ -102,17 +112,22 @@ export function AlertasPage() {
         })}
       </div>
 
-      {selected ? <AlertDetail key={selected.id} item={selected} rol={alerts.rol || user?.rol || ""} /> : null}
+      {selected ? (
+        <AlertDetail key={selected.id} item={selected} rol={alerts.rol || user?.rol || ""} />
+      ) : null}
     </div>
   );
 }
 
 function AlertDetail({ item, rol }: { item: AlertItem; rol: string }) {
+  const { filters } = useApp();
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState<(typeof PAGE_SIZES)[number]>(10);
   const [area, setArea] = useState("");
   const [jefe, setJefe] = useState("");
   const [flujo, setFlujo] = useState("");
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState("");
   const personas = item.personas;
 
   const matches = useMemo(() => {
@@ -173,6 +188,30 @@ function AlertDetail({ item, rol }: { item: AlertItem; rol: string }) {
 
   const showVence = item.tipo === "record_vence";
   const showMes = item.tipo === "mes_siguiente";
+
+  async function exportar() {
+    setExporting(true);
+    setExportError("");
+    try {
+      await downloadFile(
+        `/api/alerts/export${qs({
+          ...scope(filters),
+          tipo: item.tipo,
+          mes: item.mes,
+          area_filtro: area,
+          jefe_filtro: jefe,
+          flujo_filtro: flujo,
+        })}`,
+        {},
+        `ALERTA_${item.tipo}_${filters.year}.xlsx`
+      );
+    } catch (e) {
+      setExportError(e instanceof Error ? e.message : "No se pudo exportar el listado.");
+    } finally {
+      setExporting(false);
+    }
+  }
+
   const from = filtered.length ? (page - 1) * pageSize + 1 : 0;
   const to = Math.min(page * pageSize, filtered.length);
   const headers = showMes
@@ -188,12 +227,28 @@ function AlertDetail({ item, rol }: { item: AlertItem; rol: string }) {
           <p className="text-[15px] font-semibold">{item.titulo}</p>
           <p className="mt-1 text-[13px] text-muted-foreground">{item.descripcion}</p>
         </div>
-        <div className="flex w-full shrink-0 flex-col gap-2 sm:w-auto sm:items-end">
+        <div className="flex w-full shrink-0 flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
+          <Button
+            variant="outline"
+            className="w-full sm:w-auto"
+            disabled={exporting || personas.length === 0}
+            onClick={() => void exportar()}
+          >
+            <FileSpreadsheet size={16} strokeWidth={1.75} />
+            {exporting ? "Exportando…" : "Exportar a Excel"}
+          </Button>
           <Link to={item.href_plan || item.href} className="no-underline">
             <Button className="w-full sm:w-auto">{item.accion}</Button>
           </Link>
         </div>
       </div>
+      {exportError ? (
+        <div className="border-b border-border px-4 py-3 sm:px-5">
+          <Alert tone="error" title="No se completó la exportación">
+            {exportError}
+          </Alert>
+        </div>
+      ) : null}
       <div className="grid gap-3 border-b border-border px-4 py-3 sm:grid-cols-3 sm:px-5">
         <Field label="ÁREA">
           <Select value={area} onChange={(e) => setArea(e.target.value)}>
