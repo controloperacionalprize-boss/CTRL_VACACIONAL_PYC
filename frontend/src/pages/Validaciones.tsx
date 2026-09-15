@@ -249,7 +249,11 @@ export function ValidacionesPage() {
       if (path.includes("observar")) {
         setOk(done ? `Devolviste ${done} persona${done === 1 ? "" : "s"} al jefe.${extras}` : res.errors?.join(" ") || "No se observó a nadie.");
       } else if (path.includes("recepcionar")) {
-        setOk(done ? `Recepcionaste ${done} persona${done === 1 ? "" : "s"}.${extras}` : res.errors?.join(" ") || "No se recepcionó a nadie.");
+        setOk(
+          done
+            ? `Recepcionaste ${done} persona${done === 1 ? "" : "s"}. Sus documentos ya aparecen en Documentos para emitir.${extras}`
+            : res.errors?.join(" ") || "No se recepcionó a nadie."
+        );
       } else {
         setOk(done ? `Validaste ${done} persona${done === 1 ? "" : "s"}.${extras}` : res.errors?.join(" ") || "No se validó a nadie.");
       }

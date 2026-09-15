@@ -4,8 +4,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel, field_validator
 
-from ..auth import get_current_user
+from ..auth import get_current_user, require_admin
 from ..db import get_conn
+from ..doc_service import attach_jefes, item_context, load_emitidos, pendientes_por_dni, render_item
 from ..domain.calendar import (
     DERECHO_ANUAL,
     TOTAL_SEMANAS,
@@ -18,8 +19,10 @@ from ..domain.calendar import (
     derecho_vigente,
     ensure_within_derecho,
     is_business_day,
+    iso_monday,
     key_daily,
     parse_iso_date,
+    primer_inicio_jefatura,
     record_cumplido,
     move_vacation_period,
     refresh_week_targets,
@@ -27,22 +30,24 @@ from ..domain.calendar import (
     reject_if_despues_de_vencimiento,
     reject_if_exceeds_saldo,
     reject_if_start_in_past,
+    reject_if_tramo_cerrado,
     selected_count,
     today_lima,
+    tramo_cerrado,
     vacation_periods,
     vacation_record_for,
     week_dates,
     week_is_locked,
 )
-from ..domain.documents import (
-    TITULOS,
-    build_context,
-    documento_meta,
-    reconstruct_old_periods,
-)
-from ..domain.documents_pdf import filename_pdf, render_html, render_pdf
+from ..domain.documents_pdf import render_html
 from ..domain.plan import log_change, persist_employee, sparse_weeks, validate_plan
-from ..domain.workflow import enrich_workers, flujo_from_row, load_flujos, reject_if_cannot_edit
+from ..domain.workflow import (
+    enrich_workers,
+    flujo_from_row,
+    load_flujos,
+    reject_if_cannot_edit,
+)
+from ..org_scope import effective_role
 from ..services import get_employee, list_employees, load_scope_plan
 
 router = APIRouter(prefix="/api/plan", tags=["plan"])
@@ -52,6 +57,59 @@ _NOT_IN_SCOPE = "Esa persona no aparece con el filtro actual."
 
 def _http_value_error(exc: ValueError) -> HTTPException:
     return HTTPException(400, str(exc))
+
+
+def _es_admin(user: dict) -> bool:
+    return effective_role(user) == "ADMIN"
+
+
+def _semana_bloqueada(user: dict, year: int, week: int, today: date) -> bool:
+    """Semanas pasadas: nadie. Semana cuyo viernes previo ya pasó: solo Personas y Cultura (extraordinario)."""
+    if week_is_locked(year, week, today):
+        return True
+    monday = iso_monday(year, week)
+    return not _es_admin(user) and monday is not None and tramo_cerrado(monday, today)
+
+
+def _reject_if_semana_bloqueada(user: dict, year: int, week: int, today: date) -> None:
+    if week_is_locked(year, week, today):
+        raise HTTPException(400, "Esa semana ya pasó y no se puede cambiar.")
+    monday = iso_monday(year, week)
+    if not _es_admin(user) and monday is not None:
+        try:
+            reject_if_tramo_cerrado(monday, today)
+        except ValueError as exc:
+            raise _http_value_error(exc) from exc
+
+
+def _reject_if_inicio_cerrado(user: dict, inicio: date, today: date) -> None:
+    if _es_admin(user):
+        return
+    try:
+        reject_if_tramo_cerrado(inicio, today)
+    except ValueError as exc:
+        raise _http_value_error(exc) from exc
+
+
+def _pendientes_plan(cur, emp: dict, daily_set, year: int, today: date) -> tuple[list[dict], str, list[date]]:
+    """(documentos pendientes, motivo si no hay ninguno, fechas del plan). Misma regla que Documentos."""
+    dni = str(emp["dni"])
+    emitidos = load_emitidos(cur, year, [dni])
+    items, dates, motivo = pendientes_por_dni([emp], daily_set, emitidos, year, today)[dni]
+    if motivo or items or not dates:
+        return items, motivo, dates
+    return [], "Sus documentos ya se emitieron. Reimprímelos desde Documentos.", dates
+
+
+def _documento_plan(cur, user: dict, emp: dict, daily_set, targets, year: int, today: date) -> dict:
+    """Para la respuesta de guardar: {"documento": {...}} o {"documento_falta": motivo}. Solo Personas y Cultura."""
+    if not _es_admin(user):
+        return {}
+    items, falta, _dates = _pendientes_plan(cur, emp, daily_set, year, today)
+    if not items:
+        return {"documento_falta": falta} if falta else {}
+    first = items[0]
+    return {"documento": {"escenario": first["escenario"], "titulo": first["titulo"], "key": first["key"]}}
 
 
 def _load_employee_plan(cur, user: dict, dni: str, year: int):
@@ -265,10 +323,14 @@ def get_plan(
             pendientes += 1
 
     rows = enrich_workers(rows, flujos, user, today)
+    # Primer día que este usuario puede programar: Personas y Cultura desde hoy; jefatura desde la
+    # primera semana cuyo viernes previo aún no pasa.
+    primer_inicio = today if _es_admin(user) else primer_inicio_jefatura(today)
 
     return {
         "year": year,
         "today": today.isoformat(),
+        "primer_inicio": primer_inicio.isoformat(),
         "current_year": current_year,
         "current_week": current_week,
         "total_semanas": TOTAL_SEMANAS,
@@ -299,14 +361,15 @@ def week_detail(
         "dni": dni,
         "week": week,
         "today": today.isoformat(),
-        "locked": week_is_locked(year, week, today),
+        "locked": _semana_bloqueada(user, year, week, today),
         "target": int(targets.get((dni, week), 0)),
         "dates": [
             {
                 "fecha": d.isoformat(),
                 "weekday": d.weekday(),
                 "selected": d.isoformat() in selected,
-                "past": date_is_past(d, today),
+                # "past" = no se puede elegir como inicio (ya pasó o, para jefatura, la semana cerró).
+                "past": date_is_past(d, today) or (not _es_admin(user) and tramo_cerrado(d, today)),
             }
             for d in dates
         ],
@@ -316,8 +379,8 @@ def week_detail(
 
 @router.patch("/week")
 def patch_week(body: WeekPatch, user: dict = Depends(get_current_user)):
-    if week_is_locked(body.year, body.week):
-        raise HTTPException(400, "Esa semana ya pasó y no se puede cambiar.")
+    today = today_lima()
+    _reject_if_semana_bloqueada(user, body.year, body.week, today)
     with get_conn() as conn:
         cur = conn.cursor()
         emp, daily_set, targets = _load_employee_plan(cur, user, body.dni, body.year)
@@ -331,7 +394,8 @@ def patch_week(body: WeekPatch, user: dict = Depends(get_current_user)):
                 daily_set, targets, body.dni, body.year, [body.week]
             )
             try:
-                reject_if_art8_invalido(daily_set, body.dni, body.year)
+                if not _derecho_for_emp(emp, today)[1]:
+                    reject_if_art8_invalido(daily_set, body.dni, body.year)
             except ValueError as exc:
                 raise _http_value_error(exc) from exc
         else:
@@ -340,9 +404,10 @@ def patch_week(body: WeekPatch, user: dict = Depends(get_current_user)):
             if body.start_date not in set(week_dates(body.year, body.week)):
                 raise HTTPException(400, f"La fecha debe caer en la semana {body.week}.")
             try:
-                reject_if_start_in_past(body.start_date)
+                reject_if_start_in_past(body.start_date, today)
             except ValueError as exc:
                 raise _http_value_error(exc) from exc
+            _reject_if_inicio_cerrado(user, body.start_date, today)
             ingreso = parse_iso_date(emp.get("fecha_ingreso"))
             programados_base = count_days_in_record(
                 daily_set,
@@ -372,6 +437,7 @@ def patch_week(body: WeekPatch, user: dict = Depends(get_current_user)):
                     clear_week=body.week,
                     fecha_ingreso=ingreso,
                     nombre=emp["nombre"],
+                    validar_art8=not es_adelanto,
                 )
                 _ensure_saldo(
                     emp,
@@ -386,38 +452,25 @@ def patch_week(body: WeekPatch, user: dict = Depends(get_current_user)):
             except ValueError as exc:
                 raise _http_value_error(exc) from exc
         _persist_and_log(cur, body.year, emp, daily_set, targets, user, deltas)
-        periods = vacation_periods(daily_set, body.dni, body.year, today_lima())
-        _, es_adelanto = _derecho_for_emp(emp, today_lima())
-        meta = (
-            documento_meta(
-                es_adelanto=es_adelanto,
-                moved=False,
-                period_sizes=[p["dias"] for p in periods],
-            )
-            if body.days
-            else None
-        )
+        doc = _documento_plan(cur, user, emp, daily_set, targets, body.year, today) if body.days else {}
     weeks = {str(wk): new for wk, _old, new in deltas}
-    out = {"ok": True, "weeks": weeks, "selected": weeks.get(str(body.week), 0)}
-    if meta:
-        out["documento"] = meta
-        if nuevas:
-            out["fechas"] = [d.isoformat() for d in nuevas]
-            out["fin"] = nuevas[-1].isoformat()
+    out = {"ok": True, "weeks": weeks, "selected": weeks.get(str(body.week), 0), **doc}
+    if nuevas:
+        out["fechas"] = [d.isoformat() for d in nuevas]
+        out["fin"] = nuevas[-1].isoformat()
     return out
 
 
 @router.patch("/daily")
 def patch_daily(body: DailyPatch, user: dict = Depends(get_current_user)):
-    if week_is_locked(body.year, body.week):
-        raise HTTPException(400, "Esa semana ya pasó y no se puede cambiar.")
+    today = today_lima()
+    _reject_if_semana_bloqueada(user, body.year, body.week, today)
     with get_conn() as conn:
         cur = conn.cursor()
         emp, daily_set, targets = _load_employee_plan(cur, user, body.dni, body.year)
         _guard_flujo_edit(cur, user, emp, body.year)
         allowed = set(week_dates(body.year, body.week))
         modo = allowed_type(emp["tipo_personal"], body.dni)
-        today = today_lima()
         for d in body.dates:
             if d not in allowed:
                 continue
@@ -471,7 +524,8 @@ def patch_daily(body: DailyPatch, user: dict = Depends(get_current_user)):
                 derecho=derecho,
                 es_adelanto=es_adelanto,
             )
-            reject_if_art8_invalido(daily_set, body.dni, body.year)
+            if not es_adelanto:
+                reject_if_art8_invalido(daily_set, body.dni, body.year)
         except ValueError as exc:
             raise _http_value_error(exc) from exc
         old = int(targets.get((body.dni, body.week), 0))
@@ -487,13 +541,15 @@ def patch_daily(body: DailyPatch, user: dict = Depends(get_current_user)):
 
 @router.post("/consecutive")
 def consecutive(body: ConsecutiveIn, user: dict = Depends(get_current_user)):
+    today = today_lima()
+    _reject_if_inicio_cerrado(user, body.start_date, today)
     with get_conn() as conn:
         cur = conn.cursor()
         emp, daily_set, targets = _load_employee_plan(cur, user, body.dni, body.year)
         _guard_flujo_edit(cur, user, emp, body.year)
         ingreso = parse_iso_date(emp.get("fecha_ingreso"))
         programados = count_days_in_record(daily_set, body.dni, body.year, body.start_date, ingreso)
-        derecho, es_adelanto = _derecho_for_emp(emp, today_lima())
+        derecho, es_adelanto = _derecho_for_emp(emp, today)
         try:
             _reject_if_no_saldo(
                 emp,
@@ -512,6 +568,7 @@ def consecutive(body: ConsecutiveIn, user: dict = Depends(get_current_user)):
                 body.year,
                 fecha_ingreso=ingreso,
                 nombre=emp["nombre"],
+                validar_art8=not es_adelanto,
             )
             _ensure_saldo(
                 emp,
@@ -526,17 +583,13 @@ def consecutive(body: ConsecutiveIn, user: dict = Depends(get_current_user)):
         except ValueError as exc:
             raise _http_value_error(exc) from exc
         _persist_and_log(cur, body.year, emp, daily_set, targets, user, deltas)
-        periods = vacation_periods(daily_set, body.dni, body.year, today_lima())
+        doc = _documento_plan(cur, user, emp, daily_set, targets, body.year, today)
     return {
         "ok": True,
         "fechas": [d.isoformat() for d in nuevas],
         "weeks": {str(wk): new for wk, _old, new in deltas},
         "fin": nuevas[-1].isoformat() if nuevas else None,
-        "documento": documento_meta(
-            es_adelanto=es_adelanto,
-            moved=False,
-            period_sizes=[p["dias"] for p in periods],
-        ),
+        **doc,
     }
 
 
@@ -555,6 +608,7 @@ def get_periods(year: int, dni: str, user: dict = Depends(get_current_user)):
         _emp, daily_set, _targets = _load_employee_plan(cur, user, dni, year)
     today = today_lima()
     periods = vacation_periods(daily_set, dni, year, today)
+    admin = _es_admin(user)
     return {
         "dni": dni,
         "year": year,
@@ -565,7 +619,8 @@ def get_periods(year: int, dni: str, user: dict = Depends(get_current_user)):
                 "fin": p["fin"].isoformat(),
                 "dias": p["dias"],
                 "estado": p["estado"],
-                "editable": p["editable"],
+                # Tramo con la semana ya cerrada: solo Personas y Cultura lo mueve (caso extraordinario).
+                "editable": p["editable"] or (admin and p["estado"] == "cerrado"),
             }
             for p in periods
         ],
@@ -613,6 +668,8 @@ def period_move(body: PeriodMoveIn, user: dict = Depends(get_current_user)):
                 today=today,
                 fecha_ingreso=ingreso,
                 nombre=emp["nombre"],
+                permitir_cerrado=_es_admin(user),
+                validar_art8=not es_adelanto,
             )
             _ensure_saldo(
                 emp,
@@ -627,32 +684,23 @@ def period_move(body: PeriodMoveIn, user: dict = Depends(get_current_user)):
         except ValueError as exc:
             raise _http_value_error(exc) from exc
         _persist_and_log(cur, body.year, emp, daily_set, targets, user, deltas)
+        doc = _documento_plan(cur, user, emp, daily_set, targets, body.year, today)
     return {
         "ok": True,
         "fechas": [d.isoformat() for d in nuevas],
         "fin": nuevas[-1].isoformat() if nuevas else None,
         "weeks": {str(wk): new for wk, _old, new in deltas},
         "dias": n,
-        "documento": {"escenario": 3, "titulo": TITULOS[3]},
+        **doc,
     }
 
 
 class DocumentoIn(BaseModel):
     year: int
     dni: str
-    escenario: int
-    start_date: date
-    days: int
-    fin: date | None = None
-    old_start: date | None = None
+    # Documento pendiente a previsualizar (key de /documento). Sin key: el primero que toca.
+    key: str = ""
     formato: str = "pdf"
-
-    @field_validator("escenario")
-    @classmethod
-    def escenario_ok(cls, v: int) -> int:
-        if v not in TITULOS:
-            raise ValueError("Escenario de documento no válido.")
-        return v
 
     @field_validator("formato")
     @classmethod
@@ -664,41 +712,23 @@ class DocumentoIn(BaseModel):
 
 
 @router.post("/documento")
-def generar_documento(body: DocumentoIn, user: dict = Depends(get_current_user)):
+def generar_documento(body: DocumentoIn, user: dict = Depends(require_admin)):
+    """Vista previa del documento que le toca al plan. No registra la emisión (eso es en Documentos)."""
     today = today_lima()
     with get_conn(write=False) as conn:
         cur = conn.cursor()
-        emp, daily_set, _targets = _load_employee_plan(cur, user, body.dni, body.year)
-        periods = vacation_periods(daily_set, body.dni, body.year, today)
-        programmed = dates_for_dni_year(daily_set, body.dni, body.year)
-    matched = next((p for p in periods if p["inicio"] == body.start_date), None)
-    inicio = body.start_date
-    fin = body.fin or (matched["fin"] if matched else None)
-    if fin is None:
-        raise HTTPException(400, "No se encontró el período programado para armar el documento.")
-    dias = body.days
-    anteriores = (
-        reconstruct_old_periods(periods, body.old_start, inicio)
-        if body.old_start
-        else []
-    )
-    ctx = build_context(
-        emp,
-        today=today,
-        year=body.year,
-        inicio=inicio,
-        fin=fin,
-        dias=dias,
-        periodos=periods,
-        periodos_anteriores=anteriores,
-        programmed=programmed,
-    )
-    formato = (body.formato or "pdf").strip().lower()
-    if formato == "html":
-        return HTMLResponse(render_html(body.escenario, ctx))
-    name = filename_pdf(body.escenario, ctx)
+        emp, daily_set, targets = _load_employee_plan(cur, user, body.dni, body.year)
+        attach_jefes(cur, [emp])
+        items, falta, programmed = _pendientes_plan(cur, emp, daily_set, body.year, today)
+    if not items:
+        raise HTTPException(409, falta or "No hay documento para generar.")
+    item = next((i for i in items if i["key"] == body.key), items[0])
+    if body.formato == "html":
+        ctx = item_context(emp, item, year=body.year, fecha_doc=today, programmed=programmed)
+        return HTMLResponse(render_html(item["escenario"], ctx))
+    pdf, name = render_item(emp, item, year=body.year, fecha_doc=today, programmed=programmed)
     return Response(
-        content=render_pdf(body.escenario, ctx),
+        content=pdf,
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{name}"'},
     )
@@ -714,7 +744,7 @@ def validate(
 ):
     with get_conn(write=False) as conn:
         cur = conn.cursor()
-        employees = list_employees(cur, user, empresa, gerencia, area)
+        employees = list_employees(cur, user, empresa, gerencia, area, with_photos=False)
         daily_set, targets = load_scope_plan(cur, year, employees)
     errors, warnings, groups = validate_plan(employees, targets, daily_set, year)
     return {

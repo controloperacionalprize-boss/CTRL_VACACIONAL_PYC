@@ -209,7 +209,7 @@ export function ExportPage() {
                 <dd className="max-w-[60%] truncate text-right font-medium">{labelList(filters.empresas)}</dd>
               </div>
               <div className="flex justify-between gap-3">
-                <dt className="text-muted-foreground">Gerencia</dt>
+                <dt className="text-muted-foreground">División</dt>
                 <dd className="max-w-[60%] truncate text-right font-medium">{labelList(filters.gerencias)}</dd>
               </div>
               <div className="flex justify-between gap-3">

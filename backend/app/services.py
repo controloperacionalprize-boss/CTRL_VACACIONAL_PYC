@@ -4,7 +4,7 @@ from datetime import date
 
 from .domain.calendar import reconcile_targets_with_daily
 from .domain.plan import load_plan_for_year
-from .funcionarios_org import load_funcionarios_org
+from .funcionarios_org import load_funcionarios_org, maestro_version
 from .org_scope import (
     sql_fold_expr,
     dnis_from_maestro,
@@ -40,11 +40,28 @@ def employee_from_row(row, *, with_photo: bool = True) -> dict:
     return enrich_employee_photo(emp) if with_photo else emp
 
 
+_MAESTRO_DNIS_CACHE: dict[tuple, list[str]] = {}
+
+
 def _maestro_dnis(user: dict) -> list[str]:
-    if effective_role(user) == "ADMIN":
+    """DNIs extra del maestro QBiz para el alcance del usuario.
+
+    Cruzar todo el maestro (resolve_division por fila) en cada request consume mucho CPU;
+    el resultado solo cambia cuando cambia el maestro o el alcance del usuario.
+    """
+    role = effective_role(user)
+    if role == "ADMIN":
         return []
     try:
-        return dnis_from_maestro(user, load_funcionarios_org())
+        maestro = load_funcionarios_org()
+        key = (role, user.get("gerencia") or "", user.get("division") or "", user.get("area") or "", maestro_version())
+        cached = _MAESTRO_DNIS_CACHE.get(key)
+        if cached is None:
+            if len(_MAESTRO_DNIS_CACHE) > 256:
+                _MAESTRO_DNIS_CACHE.clear()
+            cached = dnis_from_maestro(user, maestro)
+            _MAESTRO_DNIS_CACHE[key] = cached
+        return cached
     except Exception:
         return []
 

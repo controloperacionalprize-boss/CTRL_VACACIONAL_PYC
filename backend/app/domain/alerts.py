@@ -155,7 +155,7 @@ def responsable_texto(role: str, jefatura: str, area: str) -> str:
         return f"Tú (jefatura {lugar})"
     if role == "GERENTE":
         return f"Jefatura de {lugar} programa; tú das seguimiento"
-    return f"Jefatura de {lugar} programa; Administración supervisa"
+    return f"Jefatura de {lugar} programa; Personas y Cultura supervisa"
 
 
 def accion_grupo(tipo: str, n: int, *, role: str = "", mes_label: str = "") -> str:
@@ -359,7 +359,7 @@ def build_record_item(workers: list[dict], today: date, role: str) -> dict | Non
         titulo="Próximo vencimiento de récord",
         descripcion=desc,
         accion=accion_grupo(TIPO_RECORD, n, role=role),
-        responsable="Jefatura programa · Gerencia sigue · Administración supervisa",
+        responsable="Jefatura programa · Gerencia sigue · Personas y Cultura supervisa",
         responsable_rol="JEFE",
         href=href_detalle(TIPO_RECORD),
         href_plan_vista=href_plan(TIPO_RECORD),
@@ -471,10 +471,10 @@ def build_pendientes_item(workers: list[dict], role: str) -> dict | None:
         if n == 1:
             desc = (
                 f"{personas[0]['nombre']} ya fue validado por gerencia y espera recepción "
-                f"de Administración ({personas[0]['area'] or 'sin área'})."
+                f"de Personas y Cultura ({personas[0]['area'] or 'sin área'})."
             )
         else:
-            desc = f"{n} trabajadores validados por gerencia esperan recepción de Administración."
+            desc = f"{n} trabajadores validados por gerencia esperan recepción de Personas y Cultura."
     else:
         titulo = "Planes observados"
         if n == 1:

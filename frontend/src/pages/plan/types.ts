@@ -34,20 +34,22 @@ export type VacPeriod = {
   editable: boolean;
 };
 
-export type DocumentoMeta = { escenario: number; titulo: string };
+/** Documento que le toca al plan (solo Personas y Cultura). `key` lo identifica en /api/plan/documento. */
+export type DocumentoMeta = { escenario: number; titulo: string; key: string };
+
+/** Respuesta de guardar: el documento listo o, si el plan aún no está completo, el motivo. */
+export type DocumentoResp = { documento?: DocumentoMeta; documento_falta?: string };
 
 export type DocReady = DocumentoMeta & {
   dni: string;
   year: number;
-  start_date: string;
-  days: number;
-  fin?: string;
-  old_start?: string;
 };
 
 export type Plan = {
   year: number;
   today?: string;
+  /** Primer día que este usuario puede programar (jefatura: la semana cierra el viernes anterior). */
+  primer_inicio?: string;
   current_year: number;
   current_week: number;
   total_semanas: number;

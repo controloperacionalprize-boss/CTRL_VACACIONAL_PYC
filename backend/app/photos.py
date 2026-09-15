@@ -22,6 +22,8 @@ from .textnorm import strip_marks
 _IMG_EXT = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
 _CACHE: tuple[float, dict[str, str]] | None = None
 _CACHE_TTL = 3600
+# nombre/usuario → URL ya resuelta contra el índice vigente.
+_RESOLVED: dict[str, str | None] = {}
 _PARTICULAS = {"de", "del", "la", "las", "los", "y", "e", "da", "do", "das", "dos"}
 _ROSTER_PATH = Path(__file__).resolve().parent / "data" / "personal_roster.json"
 
@@ -199,8 +201,11 @@ def picture_index(*, force: bool = False) -> dict[str, str]:
     idx = _fetch_index()
     if idx or force or _CACHE is None:
         _CACHE = (now, idx)
+        _RESOLVED.clear()
         return idx
-    return _CACHE[1] if _CACHE else {}
+    # GitHub no respondió: se conserva el índice anterior y no se reintenta en cada request.
+    _CACHE = (now, _CACHE[1])
+    return _CACHE[1]
 
 
 def _url_for_stem(stem: str, index: dict[str, str], base: str) -> str | None:
@@ -211,6 +216,25 @@ def _url_for_stem(stem: str, index: dict[str, str], base: str) -> str | None:
         if cand and stem and cand[0] == stem[0]:
             return f"{base}/{index[cand]}"
     return None
+
+
+_RESOLVED_MAX = 4096
+
+
+def _memo(kind: str, key: str, index: dict[str, str], compute) -> str | None:
+    """Memoriza el resultado mientras no cambie el índice de fotos (picture_index lo limpia).
+
+    El fuzzy match (difflib) cuesta ~1 ms por nombre y /api/plan lo pedía para cada
+    trabajador en cada carga; en Render free (0.1 CPU) eso eran segundos por request.
+    """
+    cache_key = f"{kind}:{key}"
+    if cache_key in _RESOLVED:
+        return _RESOLVED[cache_key]
+    if len(_RESOLVED) >= _RESOLVED_MAX:
+        _RESOLVED.clear()
+    value = compute()
+    _RESOLVED[cache_key] = value
+    return value
 
 
 def resolve_foto_url(nombre: str | None) -> str | None:
@@ -225,7 +249,10 @@ def resolve_foto_url(nombre: str | None) -> str | None:
     index = picture_index()
     if not index:
         return None
+    return _memo("nombre", nombre, index, lambda: _resolve_foto_url(nombre, index, base))
 
+
+def _resolve_foto_url(nombre: str, index: dict[str, str], base: str) -> str | None:
     # 1) Match preciso: usuario del correo en el roster JSON.
     usuario = usuario_for_nombre(nombre)
     if usuario:
@@ -264,16 +291,19 @@ def resolve_user_foto_url(
     if not index:
         return None
 
-    stems: list[str] = []
-    for cand in (usuario, usuario_from_email(correo)):
-        s = (cand or "").strip().lower()
-        if s and s not in stems:
-            stems.append(s)
-    for stem in stems:
-        hit = _url_for_stem(stem, index, base)
-        if hit:
-            return hit
-    return resolve_foto_url(nombre)
+    def compute() -> str | None:
+        stems: list[str] = []
+        for cand in (usuario, usuario_from_email(correo)):
+            s = (cand or "").strip().lower()
+            if s and s not in stems:
+                stems.append(s)
+        for stem in stems:
+            hit = _url_for_stem(stem, index, base)
+            if hit:
+                return hit
+        return resolve_foto_url(nombre)
+
+    return _memo("usuario", f"{usuario}|{correo}|{nombre}", index, compute)
 
 
 def enrich_employee_photo(emp: dict) -> dict:

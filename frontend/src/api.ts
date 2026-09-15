@@ -113,7 +113,8 @@ export async function downloadFile(path: string, init: RequestInit = {}, fallbac
   a.href = url;
   a.download = filename;
   a.click();
-  URL.revokeObjectURL(url);
+  // Revocar en el mismo tick puede cancelar la descarga en Firefox/Safari.
+  setTimeout(() => URL.revokeObjectURL(url), 30_000);
 }
 
 export async function uploadFile<T>(path: string, file: File, field = "file"): Promise<T> {

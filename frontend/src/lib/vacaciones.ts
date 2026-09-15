@@ -60,10 +60,11 @@ export function flujoEstadoLabel(estado: string, rol?: Rol | string) {
 export function etiquetaEstado(estado: string) {
   if (estado === "gozado") return "Gozado";
   if (estado === "en_curso") return "En curso";
+  if (estado === "cerrado") return "Semana cerrada";
   return "Programado";
 }
 
-/** Mismos escenarios que el PDF GTH (memorando / fraccionamiento / adelanto). */
+/** Mismos escenarios que el PDF de Personas y Cultura (memorando / fraccionamiento / adelanto). */
 export function escenarioDe(adelanto: boolean, sizes: number[], tope: number = MAX_VAC_DAYS) {
   if (adelanto) {
     return {
@@ -76,7 +77,7 @@ export function escenarioDe(adelanto: boolean, sizes: number[], tope: number = M
     return {
       n: 0,
       titulo: "Sin períodos aún",
-      detalle: "Un solo período de 30 días es memorando. Varios períodos es fraccionamiento (Art. 8: 15 corridos, o 7 y 8).",
+      detalle: "Un solo período de 30 días es memorando. Varios períodos es fraccionamiento (Art. 8: 15 corridos, o primero 7 u 8).",
     };
   }
   if (sizes.length === 1 && sizes[0] === tope) {
@@ -89,6 +90,8 @@ export function escenarioDe(adelanto: boolean, sizes: number[], tope: number = M
   return {
     n: 2,
     titulo: "Fraccionamiento de descanso vacacional",
-    detalle: "Varios períodos. Art. 8: un bloque de al menos 15 días corridos, o uno de 7 y otro de 8 (u 8 y 7).",
+    detalle:
+      "Varios períodos. Art. 8: los primeros 15 van en un bloque de 15 corridos, o en 7 y 8 (puedes guardar primero 7 u 8 y luego el otro). " +
+      "Hay que programar los 30 días completos: la solicitud y el convenio salen una sola vez; luego, un memorando por salida.",
   };
 }

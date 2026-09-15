@@ -20,7 +20,7 @@ import { EmpAvatar } from "../components/EmpAvatar";
 import { CalendarClock, CalendarDays, CalendarPlus, CalendarRange, Eye, FileDown, Users, UserCheck, UserX } from "lucide-react";
 import { FlujoBadge, lockReasonFor, WorkerCard, WorkerRow } from "./plan/WorkerGrid";
 import { JefeEquipo } from "./plan/JefeEquipo";
-import type { DocumentoMeta, DocReady, Plan, VacPeriod, WeekDay, Worker } from "./plan/types";
+import type { DocReady, DocumentoResp, Plan, VacPeriod, WeekDay, Worker } from "./plan/types";
 
 const DAY_SHORT = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
 
@@ -109,6 +109,11 @@ function esAptoPlan(w: Worker) {
   return w.apto !== false && !esAdelanto(w);
 }
 
+/** Primer día programable para el usuario (jefatura: la semana cierra el viernes anterior). */
+function primerDia(plan: Pick<Plan, "primer_inicio" | "today"> | null) {
+  return plan?.primer_inicio || plan?.today || localTodayIso();
+}
+
 function kpisFrom(workers: Worker[]) {
   let trabajadores = 0;
   let programados = 0;
@@ -187,6 +192,7 @@ export function PlanPage() {
   const [modStart, setModStart] = useState("");
   const [loadError, setLoadError] = useState("");
   const [docReady, setDocReady] = useState<DocReady | null>(null);
+  const [docFalta, setDocFalta] = useState("");
   const [docBusy, setDocBusy] = useState(false);
   const [docError, setDocError] = useState("");
   const [docPreviewUrl, setDocPreviewUrl] = useState<string | null>(null);
@@ -207,7 +213,7 @@ export function PlanPage() {
     });
     setLoadError("");
     const first = data.workers.find(esAptoPlan) || data.workers[0];
-    const minDay = data.today || localTodayIso();
+    const minDay = primerDia(data);
     setConsec((c) => {
       const start = !c.start || c.start < minDay ? minDay : c.start;
       if (c.dni && data.workers.some((w) => w.dni === c.dni)) return { ...c, start };
@@ -241,9 +247,18 @@ export function PlanPage() {
   const lockedWeeks = useMemo(() => {
     if (!plan) return [];
     return Array.from({ length: plan.total_semanas }, (_, i) =>
-      weekLocked(plan.year, i + 1, plan.current_year, plan.current_week)
+      weekLocked(plan.year, i + 1, plan.current_year, plan.current_week, plan.primer_inicio)
     );
-  }, [plan?.year, plan?.current_year, plan?.current_week, plan?.total_semanas]);
+  }, [plan?.year, plan?.current_year, plan?.current_week, plan?.total_semanas, plan?.primer_inicio]);
+
+  const aplicarDocumento = useCallback(
+    (res: DocumentoResp, dni: string) => {
+      setDocError("");
+      setDocReady(res.documento ? { ...res.documento, dni, year: params.year } : null);
+      setDocFalta(res.documento ? "" : res.documento_falta || "");
+    },
+    [params.year]
+  );
 
   const weekWindow = useMemo(() => {
     if (!plan) return [];
@@ -326,7 +341,7 @@ export function PlanPage() {
   }, [alertaDni, plan, consec.dni]);
 
   function patchFechas(partial: { start?: string; end?: string }) {
-    const minDay = plan?.today || localTodayIso();
+    const minDay = primerDia(plan);
     setConsec((c) => {
       let start = partial.start !== undefined ? partial.start : c.start;
       let end = partial.end !== undefined ? partial.end : c.end;
@@ -376,8 +391,8 @@ export function PlanPage() {
         setError(msg);
         return msg;
       }
-      if (weekLocked(plan?.year ?? params.year, week, plan?.current_year ?? 0, plan?.current_week ?? 0)) {
-        const msg = `La semana ${week} ya pasó. Solo puedes editar la semana ${plan?.current_week ?? "en curso"} y las siguientes.`;
+      if (weekLocked(plan?.year ?? params.year, week, plan?.current_year ?? 0, plan?.current_week ?? 0, plan?.primer_inicio)) {
+        const msg = `La semana ${week} ya está cerrada. Puedes programar desde el ${formatFechaIso(primerDia(plan))}.`;
         setError(msg);
         return msg;
       }
@@ -388,9 +403,8 @@ export function PlanPage() {
       }
       setSavingCell({ dni: w.dni, week });
       try {
-        const res = await api<{
+        const res = await api<DocumentoResp & {
           weeks?: Record<string, number>;
-          documento?: DocumentoMeta;
           fin?: string;
           fechas?: string[];
         }>("/api/plan/week", {
@@ -407,20 +421,7 @@ export function PlanPage() {
         applyLocalWeeks(w.dni, updates);
         setPeriodosTick((n) => n + 1);
         const spill = Object.keys(updates).filter((k) => Number(k) !== week);
-        if (res.documento && days > 0 && startDate) {
-          const fin = res.fin || (res.fechas && res.fechas[res.fechas.length - 1]) || "";
-          setDocError("");
-          setDocReady({
-            ...res.documento,
-            dni: w.dni,
-            year: params.year,
-            start_date: startDate,
-            days,
-            fin: fin || undefined,
-          });
-        } else if (days === 0) {
-          setDocReady(null);
-        }
+        aplicarDocumento(days > 0 ? res : {}, w.dni);
         setOk(
           days === 0
             ? "Listo: se quitaron las vacaciones de esa semana."
@@ -440,7 +441,7 @@ export function PlanPage() {
         setSavingCell(null);
       }
     },
-    [applyLocalWeeks, params, plan?.year, plan?.current_year, plan?.current_week]
+    [applyLocalWeeks, aplicarDocumento, params, plan?.year, plan?.current_year, plan?.current_week, plan?.primer_inicio, plan?.today]
   );
 
   const onDays = useCallback(
@@ -564,10 +565,12 @@ export function PlanPage() {
       setError("La fecha de inicio no es válida.");
       return;
     }
-    const todayIso = plan?.today || localTodayIso();
+    const todayIso = primerDia(plan);
     if (consec.start < todayIso) {
       setError(
-        `No se puede programar desde una fecha anterior a hoy (${todayIso.slice(8, 10)}/${todayIso.slice(5, 7)}/${todayIso.slice(0, 4)}).`
+        plan?.primer_inicio && plan.primer_inicio !== plan.today
+          ? `Esa semana ya cerró: se puede programar desde el ${formatFechaIso(todayIso)} (la semana cierra el viernes anterior).`
+          : `No se puede programar desde una fecha anterior a hoy (${formatFechaIso(todayIso)}).`
       );
       return;
     }
@@ -579,7 +582,7 @@ export function PlanPage() {
     }
     setConsecSaving(true);
     try {
-      const res = await api<{ fechas?: string[]; fin?: string; documento?: DocumentoMeta }>(
+      const res = await api<DocumentoResp & { fechas?: string[]; fin?: string }>(
         "/api/plan/consecutive",
         {
           method: "POST",
@@ -594,19 +597,7 @@ export function PlanPage() {
       await load();
       setPeriodosTick((n) => n + 1);
       const fin = res.fin || (res.fechas && res.fechas[res.fechas.length - 1]) || consec.end || "";
-      setDocError("");
-      setDocReady(
-        res.documento
-          ? {
-              ...res.documento,
-              dni: consec.dni,
-              year: params.year,
-              start_date: consec.start,
-              days,
-              fin: fin || undefined,
-            }
-          : null
-      );
+      aplicarDocumento(res, consec.dni);
       setOk(
         fin
           ? `Listo: se programaron ${days} día(s) del ${formatFechaIso(consec.start)} al ${formatFechaIso(fin)}.`
@@ -676,9 +667,9 @@ export function PlanPage() {
       setAdelantoError(msgSinSaldo(worker.nombre, days, worker.total_dias, tope, true));
       return;
     }
-    const todayIso = plan?.today || localTodayIso();
+    const todayIso = primerDia(plan);
     if (consec.start < todayIso) {
-      setAdelantoError("No se puede programar desde una fecha anterior a hoy.");
+      setAdelantoError(`No se puede programar antes del ${formatFechaIso(todayIso)}.`);
       return;
     }
     if (worker.fecha_vencimiento && consec.end > worker.fecha_vencimiento) {
@@ -689,7 +680,7 @@ export function PlanPage() {
     }
     setConsecSaving(true);
     try {
-      const res = await api<{ fin?: string; fechas?: string[]; documento?: DocumentoMeta }>(
+      const res = await api<DocumentoResp & { fin?: string; fechas?: string[] }>(
         "/api/plan/consecutive",
         {
           method: "POST",
@@ -705,19 +696,7 @@ export function PlanPage() {
       setPeriodosTick((n) => n + 1);
       setAdelantoOpen(false);
       const fin = res.fin || (res.fechas && res.fechas[res.fechas.length - 1]) || consec.end || "";
-      setDocError("");
-      setDocReady(
-        res.documento
-          ? {
-              ...res.documento,
-              dni: consec.dni,
-              year: params.year,
-              start_date: consec.start,
-              days,
-              fin: fin || undefined,
-            }
-          : null
-      );
+      aplicarDocumento(res, consec.dni);
       setOk(
         `Listo: se adelantaron ${days} día(s) para ${worker.nombre} del ${formatFechaIso(consec.start)} al ${formatFechaIso(fin || consec.end)} (tope acumulado ${tope}).`
       );
@@ -761,9 +740,9 @@ export function PlanPage() {
       setModificarError("Ese período ya comenzó o ya fue gozado; no se puede cambiar.");
       return;
     }
-    const todayIso = plan?.today || localTodayIso();
+    const todayIso = primerDia(plan);
     if (modStart < todayIso) {
-      setModificarError("La nueva fecha no puede ser anterior a hoy.");
+      setModificarError(`La nueva fecha no puede ser anterior al ${formatFechaIso(todayIso)}.`);
       return;
     }
     const nuevoFin = addDaysIso(modStart, periodo.dias - 1);
@@ -775,7 +754,7 @@ export function PlanPage() {
     }
     setConsecSaving(true);
     try {
-      const res = await api<{ fin?: string; documento?: DocumentoMeta }>("/api/plan/period-move", {
+      const res = await api<DocumentoResp & { fin?: string }>("/api/plan/period-move", {
         method: "POST",
         body: JSON.stringify({
           year: params.year,
@@ -788,20 +767,7 @@ export function PlanPage() {
       await load();
       setPeriodosTick((n) => n + 1);
       setModificarOpen(false);
-      setDocError("");
-      setDocReady(
-        res.documento
-          ? {
-              ...res.documento,
-              dni: consec.dni,
-              year: params.year,
-              start_date: modStart,
-              days: periodo.dias,
-              fin: res.fin,
-              old_start: periodoSel,
-            }
-          : null
-      );
+      aplicarDocumento(res, consec.dni);
       setOk(
         `Listo: el período de ${periodo.dias} día(s) pasó del ${formatFechaIso(periodo.inicio)} al ${formatFechaIso(modStart)}` +
           (res.fin ? ` (termina ${formatFechaIso(res.fin)})` : "") +
@@ -845,25 +811,11 @@ export function PlanPage() {
     }
   }
 
-  async function pedirDocumento(formato: "pdf" | "html") {
-    if (!docReady) throw new Error("No hay documento listo.");
-    return fetchFile(
-      "/api/plan/documento",
-      {
-        method: "POST",
-        body: JSON.stringify({
-          year: docReady.year,
-          dni: docReady.dni,
-          escenario: docReady.escenario,
-          start_date: docReady.start_date,
-          days: docReady.days,
-          fin: docReady.fin,
-          old_start: docReady.old_start,
-          formato,
-        }),
-      },
-      formato === "pdf" ? "vacaciones.pdf" : "vacaciones.html"
-    );
+  function documentoRequest(doc: DocReady): RequestInit {
+    return {
+      method: "POST",
+      body: JSON.stringify({ year: doc.year, dni: doc.dni, key: doc.key, formato: "pdf" }),
+    };
   }
 
   async function descargarDocumento() {
@@ -871,23 +823,7 @@ export function PlanPage() {
     setDocBusy(true);
     setDocError("");
     try {
-      await downloadFile(
-        "/api/plan/documento",
-        {
-          method: "POST",
-          body: JSON.stringify({
-            year: docReady.year,
-            dni: docReady.dni,
-            escenario: docReady.escenario,
-            start_date: docReady.start_date,
-            days: docReady.days,
-            fin: docReady.fin,
-            old_start: docReady.old_start,
-            formato: "pdf",
-          }),
-        },
-        "vacaciones.pdf"
-      );
+      await downloadFile("/api/plan/documento", documentoRequest(docReady), "vacaciones.pdf");
     } catch (e) {
       setDocError(e instanceof Error ? e.message : "No se pudo descargar el PDF.");
     } finally {
@@ -900,7 +836,7 @@ export function PlanPage() {
     setDocBusy(true);
     setDocError("");
     try {
-      const { blob } = await pedirDocumento("pdf");
+      const { blob } = await fetchFile("/api/plan/documento", documentoRequest(docReady), "vacaciones.pdf");
       setDocPreviewUrl((prev) => {
         if (prev) URL.revokeObjectURL(prev);
         return URL.createObjectURL(blob);
@@ -928,7 +864,7 @@ export function PlanPage() {
   const isAdmin = Boolean(user?.is_admin);
   const isJefe = Boolean(user?.is_jefe);
   const isGerente = Boolean(user?.is_gerente) && !isAdmin && !isJefe;
-  const minProgramable = plan.today || localTodayIso();
+  const minProgramable = primerDia(plan);
   const maxGoce = consecWorker?.fecha_vencimiento || undefined;
   const startIso = consec.start || minProgramable;
   const consecDays = inclusiveDays(startIso, consec.end);
@@ -994,8 +930,8 @@ export function PlanPage() {
           isGerente
             ? "El gerente no programa días: revisa la bandeja para validar u observar lo que envió el jefe."
             : isJefe
-              ? "Programa vacaciones a tu equipo y, cuando estén listos, envía el plan al gerente para que lo valide."
-              : `Estás en la semana ${plan.current_week}. Solo se programan días desde hoy hacia adelante; semanas anteriores no se editan.`
+              ? `Programa los 30 días de cada persona y envía el plan al gerente. Cada semana se programa o cambia hasta el viernes anterior: hoy puedes desde el ${formatFechaIso(minProgramable)}.`
+              : `Estás en la semana ${plan.current_week}. Como Personas y Cultura puedes programar desde hoy y mover tramos de semanas ya cerradas (casos extraordinarios).`
         }
       />
 
@@ -1030,7 +966,8 @@ export function PlanPage() {
       {ok ? (
         <Alert tone="success" title="Guardado">
           <p>{ok}</p>
-          {docReady ? (
+          {isAdmin && docFalta ? <p className="mt-2 text-[12px] text-warning">{docFalta}</p> : null}
+          {isAdmin && docReady ? (
             <div className="mt-3 flex flex-wrap gap-2">
               <Button
                 variant="outline"
@@ -1051,7 +988,8 @@ export function PlanPage() {
                 {docBusy ? "Preparando PDF…" : `Descargar ${docReady.titulo}`}
               </Button>
               <p className="mt-1.5 w-full text-[11px] text-muted-foreground">
-                Sale en PDF, listo para imprimir y firmar. Puedes revisar la vista previa antes de bajarlo.
+                Vista previa en PDF. La emisión oficial (y el registro de qué se entregó) se hace en Documentos,
+                cuando el plan esté recepcionado.
               </p>
             </div>
           ) : null}
@@ -1061,7 +999,7 @@ export function PlanPage() {
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4 md:gap-4">
         <Kpi label="Trabajadores" value={kpisVista.trabajadores} hint={alertaTipo ? "En esta alerta" : "Aptos para vacaciones"} icon={<Users size={18} strokeWidth={1.75} />} />
-        <Kpi label="Programados" value={kpisVista.programados} hint="Aptos con vacaciones" icon={<UserCheck size={18} strokeWidth={1.75} />} />
+        <Kpi label="Programados" value={kpisVista.programados} hint="Con al menos un día programado" icon={<UserCheck size={18} strokeWidth={1.75} />} />
         <Kpi label="Sin programación" value={kpisVista.pendientes} hint={`Aptos aún sin días en ${plan.year}`} icon={<UserX size={18} strokeWidth={1.75} />} />
         <Kpi label="Días programados" value={kpisVista.dias} hint="Suma de aptos" icon={<CalendarDays size={18} strokeWidth={1.75} />} />
       </div>
@@ -1372,7 +1310,10 @@ export function PlanPage() {
                 <div className="rounded-xl border border-border p-3">
                   <p className="text-[13px] font-semibold">Período {periodos.length + 1}</p>
                   <p className="mt-0.5 text-[12px] text-muted-foreground">
-                    Quedan {saldoRestante} día{saldoRestante === 1 ? "" : "s"}. Este período no tiene que ser todo: al guardar se abre el siguiente.
+                    Quedan {saldoRestante} día{saldoRestante === 1 ? "" : "s"}.{" "}
+                    {periodos.length === 0 && !workerEsAdelanto
+                      ? "El primer período debe tener al menos 7 días (o 15 / 30 corridos). Al guardar se abre el siguiente."
+                      : "Este período no tiene que ser todo: al guardar se abre el siguiente."}
                   </p>
                   <div className="mt-3 grid grid-cols-2 gap-3">
                     <CamposFechas
@@ -1799,7 +1740,7 @@ export function PlanPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
           <div className="flex h-[min(92vh,980px)] w-full max-w-4xl flex-col overflow-hidden rounded-xl border border-border bg-card shadow-[var(--shadow-card)]">
             <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
-              <p className="text-sm font-semibold">{docReady?.titulo || "Documento GTH"}</p>
+              <p className="text-sm font-semibold">{docReady?.titulo || "Documento de Personas y Cultura"}</p>
               <div className="flex gap-2">
                 <Button variant="outline" className="h-9" disabled={docBusy} onClick={() => void descargarDocumento()}>
                   <FileDown size={16} strokeWidth={1.75} />

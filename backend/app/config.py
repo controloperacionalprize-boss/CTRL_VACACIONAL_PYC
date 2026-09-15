@@ -52,6 +52,19 @@ class Settings(BaseSettings):
     pictures_repo: str = "CCozd/PICTURES"
     pictures_base_url: str = "https://raw.githubusercontent.com/CCozd/PICTURES/main"
 
+    # Correo saliente (documentos al trabajador y avisos a jefaturas). Apagado por defecto.
+    mail_enabled: bool = False
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from: str = ""
+    smtp_starttls: bool = True
+    # Copia fija para Personas y Cultura (separar varias con coma).
+    mail_cc: str = ""
+    # Si se define, POST /api/notificaciones/jefaturas/cron acepta este token (tarea programada).
+    cron_token: str = ""
+
     @field_validator("jwt_secret")
     @classmethod
     def jwt_secret_ok(cls, v: str) -> str:

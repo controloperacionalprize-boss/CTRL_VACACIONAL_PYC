@@ -131,7 +131,42 @@ CREATE TABLE IF NOT EXISTS plan_flujo (
 CREATE INDEX IF NOT EXISTS idx_plan_flujo_estado ON plan_flujo (anio, estado);
 CREATE INDEX IF NOT EXISTS idx_employees_area ON employees (area);
 
--- Emisión GTH: descarga de PDF de un plan ya RECEPCIONADO.
+-- Correos del trabajador (corporativo y personal). La API los agrega si faltan.
+ALTER TABLE employees ADD COLUMN IF NOT EXISTS correo TEXT NOT NULL DEFAULT '';
+ALTER TABLE employees ADD COLUMN IF NOT EXISTS correo_personal TEXT NOT NULL DEFAULT '';
+
+-- Emisión GTH por documento: convenio/modificación una vez, memorando por tramo.
+CREATE TABLE IF NOT EXISTS plan_documento (
+    id SERIAL PRIMARY KEY,
+    anio INTEGER NOT NULL,
+    dni TEXT NOT NULL,
+    tipo TEXT NOT NULL,
+    tramo_inicio DATE,
+    tramo_fin DATE,
+    dias INTEGER NOT NULL DEFAULT 0,
+    periodos JSONB NOT NULL DEFAULT '[]'::jsonb,
+    periodos_anteriores JSONB NOT NULL DEFAULT '[]'::jsonb,
+    fecha_convenio DATE,
+    emitido_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    emitido_por TEXT NOT NULL DEFAULT '',
+    emitido_nombre TEXT NOT NULL DEFAULT '',
+    descargas INTEGER NOT NULL DEFAULT 1,
+    enviado_at TIMESTAMPTZ,
+    enviado_a TEXT NOT NULL DEFAULT '',
+    envio_error TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_plan_documento_dni ON plan_documento (anio, dni);
+
+-- Textos editables por Administración (mensajes de correo).
+CREATE TABLE IF NOT EXISTS app_config (
+    clave TEXT PRIMARY KEY,
+    valor TEXT NOT NULL DEFAULT '',
+    actualizado TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    actualizado_por TEXT NOT NULL DEFAULT ''
+);
+
+-- Esquema anterior (una fila por persona). Se migra a plan_documento al arrancar.
 CREATE TABLE IF NOT EXISTS plan_documento_emision (
     anio INTEGER NOT NULL,
     dni TEXT NOT NULL,

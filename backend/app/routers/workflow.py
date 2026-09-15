@@ -1,5 +1,4 @@
 from collections import defaultdict
-from datetime import date
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import Response
@@ -9,8 +8,9 @@ from ..auth import get_current_user
 from ..db import get_conn
 from ..domain.calendar import (
     es_apto,
-    parse_daily_key,
+    index_dates_by_dni,
     parse_iso_date,
+    primer_inicio_jefatura,
     reject_if_art8_invalido,
     reject_if_plan_not_completo,
     today_lima,
@@ -56,18 +56,6 @@ class FlujoAction(BaseModel):
     observacion: str = Field(default="", max_length=2000)
 
 
-def _index_daily_by_dni(daily_set, year: int) -> dict[str, list[date]]:
-    """Una sola pasada por daily_set, en vez de recorrerlo entero por cada trabajador."""
-    out: dict[str, list[date]] = defaultdict(list)
-    for item in daily_set:
-        dni, d = parse_daily_key(item)
-        if d.isocalendar()[0] == year:
-            out[dni].append(d)
-    for dates in out.values():
-        dates.sort()
-    return out
-
-
 def _items_for(
     cur,
     user: dict,
@@ -84,7 +72,7 @@ def _items_for(
     daily_set, targets = load_scope_plan(cur, year, employees)
     flujos = load_flujos(cur, year, [e["dni"] for e in employees])
     rows = enrich_workers(employees, flujos, user, today)
-    dates_by_dni = _index_daily_by_dni(daily_set, year)
+    dates_by_dni = index_dates_by_dni(daily_set, year)
     items = []
     for w in rows:
         estado = w["flujo_estado"]
@@ -194,13 +182,18 @@ def enviar_aptos(
         raise HTTPException(403, "Solo el jefe envía el plan al gerente.")
     with get_conn() as conn:
         cur = conn.cursor()
-        items, daily_set, targets, today = _items_for(cur, user, year, empresa, gerencia, area)
+        items, daily_set, targets, today = _items_for(
+            cur, user, year, empresa, gerencia, area, with_photos=False
+        )
+        dates_by_dni = index_dates_by_dni(daily_set, year)
         incompletos = []
         dnis = []
         for i in items:
             if not i.get("apto"):
                 continue
-            dias, derecho, _ = goce_y_derecho(i, daily_set, targets, year, today)
+            dias, derecho, _ = goce_y_derecho(
+                i, daily_set, targets, year, today, dates=dates_by_dni.get(str(i["dni"]), [])
+            )
             if dias != derecho:
                 incompletos.append(i)
             elif i["flujo_estado"] in EDITABLE:
@@ -230,7 +223,7 @@ def validar(body: FlujoAction, user: dict = Depends(get_current_user)):
 @router.post("/observar")
 def observar(body: FlujoAction, user: dict = Depends(get_current_user)):
     if effective_role(user) not in {"GERENTE", "ADMIN"}:
-        raise HTTPException(403, "Solo el gerente o el administrador pueden observar.")
+        raise HTTPException(403, "Solo el gerente o Personas y Cultura pueden observar.")
     with get_conn() as conn:
         return _apply_destino(conn.cursor(), user, body.year, body.dnis, OBSERVADO, body.observacion)
 
@@ -238,7 +231,7 @@ def observar(body: FlujoAction, user: dict = Depends(get_current_user)):
 @router.post("/recepcionar")
 def recepcionar(body: FlujoAction, user: dict = Depends(get_current_user)):
     if effective_role(user) != "ADMIN":
-        raise HTTPException(403, "Solo el administrador recepciona la validación del gerente.")
+        raise HTTPException(403, "Solo Personas y Cultura recepciona la validación del gerente.")
     with get_conn() as conn:
         return _apply_destino(conn.cursor(), user, body.year, body.dnis, RECEPCIONADO)
 
@@ -342,6 +335,7 @@ async def cargar_excel(
                         today,
                         fecha_ingreso=parse_iso_date(emp.get("fecha_ingreso")),
                         nombre=emp["nombre"],
+                        primer_inicio=primer_inicio_jefatura(today),
                     )
                     _validate_period_saldo(emp, daily_set, year, today)
                     persist_employee(cur, year, emp, daily_set, targets, user["correo"])

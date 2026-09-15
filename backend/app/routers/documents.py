@@ -1,4 +1,4 @@
-"""Cola Admin de documentos GTH: listar, PDF individual y ZIP."""
+"""Cola de documentos de Personas y Cultura: qué emitir, PDF, ZIP, reimpresión y envío por correo."""
 from __future__ import annotations
 
 from datetime import date
@@ -7,164 +7,102 @@ from zipfile import ZIP_DEFLATED, ZipFile
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 from ..auth import require_admin
 from ..db import get_conn
-from ..domain.alerts import attach_jefe_nombres
-from ..domain.calendar import dates_for_dni_year, parse_iso_date, today_lima, vacation_periods
+from ..doc_service import (
+    attach_jefes,
+    fecha_de,
+    load_emitido,
+    load_emitidos,
+    lock_persona,
+    pendientes_por_dni,
+    registrar,
+    reimpresion,
+    render_item,
+)
+from ..domain.calendar import dates_for_dni_year, today_lima
 from ..domain.doc_emision import (
     EMITIDO,
+    ESTADO_LABEL,
     MAX_ZIP,
     POR_EMITIR,
-    POR_REEMITIR,
-    item_documento,
-    plan_hash,
+    PROXIMO,
+    TITULO_DE_TIPO,
+    tramo_json,
+    tramos_desde_json,
 )
-from ..domain.documents import TEMPLATES, TITULOS, build_context
-from ..domain.documents_pdf import filename_pdf, render_pdf
+from ..domain.documents import TEMPLATES
 from ..domain.workflow import RECEPCIONADO, _ts, load_flujos
-from ..services import list_employees, load_scope_plan
+from ..mailer import Adjunto, Correo, MailError, Mailer, cc_fijo, mail_configured
+from ..mensajes import correos_trabajador, load_mensajes, rellenar
+from ..services import get_employee, list_employees, load_scope_plan
 
 router = APIRouter(prefix="/api/documentos", tags=["documentos"])
 
-
-def _attach_jefes(cur, rows: list[dict]) -> None:
-    cur.execute(
-        """SELECT nombre, area, jefatura, gerencia, cargo_actual
-           FROM employees
-           WHERE activo = TRUE AND cargo_actual ILIKE %s""",
-        ("JEFE%",),
-    )
-    org_jefes = list(cur.fetchall())
-    cur.execute(
-        """SELECT correo, nombre_persona, nombre_usuario, area, gerencia
-           FROM users
-           WHERE activo = TRUE AND upper(rol) = 'JEFE' AND COALESCE(area, '') <> ''"""
-    )
-    attach_jefe_nombres(rows, org_jefes, list(cur.fetchall()))
+MAX_ENVIO = 20
 
 
-def _load_emisiones(cur, year: int, dnis: list[str]) -> dict[str, dict]:
-    if not dnis:
-        return {}
-    cur.execute(
-        """SELECT anio, dni, escenario, plan_hash, descargas, descargado_at,
-                  descargado_por, descargado_nombre
-           FROM plan_documento_emision
-           WHERE anio = %s AND dni = ANY(%s)""",
-        (year, dnis),
-    )
-    out: dict[str, dict] = {}
-    for r in cur.fetchall():
-        out[str(r["dni"])] = {
-            "escenario": int(r["escenario"] or 0),
-            "plan_hash": r["plan_hash"] or "",
-            "descargas": int(r["descargas"] or 0),
-            "descargado_at": _ts(r["descargado_at"]),
-            "descargado_por": r["descargado_por"] or "",
-            "descargado_nombre": r["descargado_nombre"] or "",
-        }
-    return out
+def _persona(emp: dict) -> dict:
+    return {
+        "dni": str(emp.get("dni") or ""),
+        "nombre": emp.get("nombre") or "",
+        "area": (emp.get("area") or "").strip(),
+        "jefatura": (emp.get("jefatura") or "").strip(),
+        "jefe_nombre": (emp.get("jefe_nombre") or "").strip(),
+        "gerencia": (emp.get("gerencia") or emp.get("division") or "").strip(),
+    }
 
 
-def _cola(cur, user: dict, year: int, empresa, gerencia, area, today: date) -> list[dict]:
+def _iso(d) -> str | None:
+    return d.isoformat() if isinstance(d, date) else (str(d) if d else None)
+
+
+def _item_json(emp: dict, item: dict) -> dict:
+    tramo = item.get("tramo")
+    return {
+        **_persona(emp),
+        "key": item["key"],
+        "tipo": item["tipo"],
+        "escenario": item["escenario"],
+        "titulo": item["titulo"],
+        "estado": item["estado"],
+        "estado_label": ESTADO_LABEL[item["estado"]],
+        "tramo": tramo_json(tramo) if tramo else None,
+        "incluye_memorando": bool(tramo) and item["tipo"] in {"fraccionamiento", "modificacion"},
+        "periodos": [tramo_json(p) for p in item.get("periodos") or []],
+        "periodos_anteriores": [tramo_json(p) for p in item.get("periodos_anteriores") or []],
+        "emitir_desde": _iso(item.get("emitir_desde")),
+    }
+
+
+def _fila_json(emp: dict, fila: dict) -> dict:
+    tramo = None
+    if fila.get("tramo_inicio") and fila.get("tramo_fin"):
+        tramo = tramo_json({"inicio": fila["tramo_inicio"], "fin": fila["tramo_fin"], "dias": fila["dias"]})
+    return {
+        **_persona(emp),
+        "id": int(fila["id"]),
+        "tipo": fila["tipo"],
+        "titulo": TITULO_DE_TIPO.get(fila["tipo"], fila["tipo"]),
+        "estado": EMITIDO,
+        "estado_label": ESTADO_LABEL[EMITIDO],
+        "tramo": tramo,
+        "periodos": [tramo_json(p) for p in tramos_desde_json(fila.get("periodos"))],
+        "emitido_at": _ts(fila.get("emitido_at")),
+        "emitido_por": fila.get("emitido_nombre") or fila.get("emitido_por") or "",
+        "descargas": int(fila.get("descargas") or 0),
+        "enviado_at": _ts(fila.get("enviado_at")),
+        "enviado_a": fila.get("enviado_a") or "",
+        "envio_error": fila.get("envio_error") or "",
+    }
+
+
+def _recepcionados(cur, user: dict, year: int, empresa, gerencia, area) -> list[dict]:
     employees = list_employees(cur, user, empresa, gerencia, area, with_photos=False)
-    dnis = [e["dni"] for e in employees]
-    flujos = load_flujos(cur, year, dnis)
-    recep = [e for e in employees if (flujos.get(e["dni"]) or {}).get("estado") == RECEPCIONADO]
-    if not recep:
-        return []
-    daily_set, _targets = load_scope_plan(cur, year, recep)
-    emisiones = _load_emisiones(cur, year, [e["dni"] for e in recep])
-    _attach_jefes(cur, recep)
-    items = []
-    for e in recep:
-        dates = dates_for_dni_year(daily_set, e["dni"], year)
-        periodos = vacation_periods(daily_set, e["dni"], year, today, dates=dates)
-        fl = flujos.get(e["dni"]) or {}
-        row = item_documento(
-            e,
-            periodos=periodos,
-            dates=dates,
-            today=today,
-            emision=emisiones.get(e["dni"]),
-            recepcionado_at=fl.get("recepcionado_at"),
-        )
-        if row:
-            items.append(row)
-    items.sort(key=lambda r: ((r.get("nombre") or ""), r["dni"]))
-    return items
-
-
-def _pdf_bytes(emp: dict, year: int, daily_set: set, today: date) -> tuple[bytes, str, int, str, list[dict]]:
-    dates = dates_for_dni_year(daily_set, emp["dni"], year)
-    periodos = vacation_periods(daily_set, emp["dni"], year, today, dates=dates)
-    row = item_documento(
-        emp,
-        periodos=periodos,
-        dates=dates,
-        today=today,
-        emision=None,
-        recepcionado_at=None,
-    )
-    if not row:
-        raise HTTPException(400, "Este plan no tiene períodos para armar el documento.")
-    inicio = periodos[0]["inicio"]
-    fin = periodos[-1]["fin"]
-    dias = int(periodos[0]["dias"] or 0)
-    ctx = build_context(
-        emp,
-        today=today,
-        year=year,
-        inicio=inicio,
-        fin=fin,
-        dias=dias,
-        periodos=periodos,
-        programmed=dates,
-    )
-    escenario = row["escenario"]
-    return (
-        render_pdf(escenario, ctx),
-        filename_pdf(escenario, ctx),
-        escenario,
-        plan_hash(dates),
-        periodos,
-    )
-
-
-def _registrar(cur, year: int, dni: str, escenario: int, current_hash: str, user: dict) -> None:
-    nombre = (
-        user.get("nombre_persona")
-        or user.get("nombre_usuario")
-        or user.get("correo")
-        or ""
-    )
-    cur.execute(
-        """INSERT INTO plan_documento_emision (
-               anio, dni, escenario, plan_hash, descargas,
-               descargado_at, descargado_por, descargado_nombre
-           ) VALUES (%s, %s, %s, %s, 1, NOW(), %s, %s)
-           ON CONFLICT (anio, dni) DO UPDATE SET
-               escenario = EXCLUDED.escenario,
-               plan_hash = EXCLUDED.plan_hash,
-               descargas = plan_documento_emision.descargas + 1,
-               descargado_at = NOW(),
-               descargado_por = EXCLUDED.descargado_por,
-               descargado_nombre = EXCLUDED.descargado_nombre""",
-        (year, dni, escenario, current_hash, user.get("correo") or "", nombre),
-    )
-
-
-def _emp_recepcionado(cur, user: dict, year: int, dni: str, empresa, gerencia, area):
-    employees = list_employees(cur, user, empresa, gerencia, area, with_photos=False)
-    emp = next((e for e in employees if str(e["dni"]) == str(dni)), None)
-    if not emp:
-        raise HTTPException(404, "No está en tu alcance.")
-    flujos = load_flujos(cur, year, [emp["dni"]])
-    if (flujos.get(emp["dni"]) or {}).get("estado") != RECEPCIONADO:
-        raise HTTPException(409, "Solo se emite el PDF de un plan ya recepcionado.")
-    return emp
+    flujos = load_flujos(cur, year, [e["dni"] for e in employees])
+    return [e for e in employees if (flujos.get(e["dni"]) or {}).get("estado") == RECEPCIONADO]
 
 
 @router.get("")
@@ -177,56 +115,107 @@ def listar_documentos(
 ):
     today = today_lima()
     with get_conn(write=False) as conn:
-        items = _cola(conn.cursor(), user, year, empresa, gerencia, area, today)
-    resumen = {
-        POR_EMITIR: sum(1 for i in items if i["estado_emision"] == POR_EMITIR),
-        POR_REEMITIR: sum(1 for i in items if i["estado_emision"] == POR_REEMITIR),
-        EMITIDO: sum(1 for i in items if i["estado_emision"] == EMITIDO),
-    }
+        cur = conn.cursor()
+        recep = _recepcionados(cur, user, year, empresa, gerencia, area)
+        items: list[dict] = []
+        emitidos_json: list[dict] = []
+        bloqueados: list[dict] = []
+        if recep:
+            daily_set, _t = load_scope_plan(cur, year, recep)
+            emitidos = load_emitidos(cur, year, [e["dni"] for e in recep])
+            attach_jefes(cur, recep)
+            pendientes = pendientes_por_dni(recep, daily_set, emitidos, year, today)
+            for emp in recep:
+                dni = str(emp["dni"])
+                pend, _dates, motivo = pendientes[dni]
+                items.extend(_item_json(emp, it) for it in pend)
+                emitidos_json.extend(_fila_json(emp, f) for f in emitidos.get(dni, []))
+                if motivo:
+                    # Recepcionado pero luego editado (p. ej. caso extraordinario): no se emite hasta corregir.
+                    bloqueados.append({**_persona(emp), "motivo": motivo})
+    items.sort(key=lambda r: (r["estado"] != POR_EMITIR, (r["tramo"] or {}).get("inicio") or "", r["nombre"]))
+    emitidos_json.sort(key=lambda r: r["emitido_at"] or "", reverse=True)
     return {
         "year": year,
-        "resumen": resumen,
+        "resumen": {
+            POR_EMITIR: sum(1 for i in items if i["estado"] == POR_EMITIR),
+            PROXIMO: sum(1 for i in items if i["estado"] == PROXIMO),
+            EMITIDO: len(emitidos_json),
+        },
         "max_zip": MAX_ZIP,
-        "tipos": [{"escenario": k, "titulo": v} for k, v in TITULOS.items()],
+        "max_envio": MAX_ENVIO,
+        "correo_activo": mail_configured(),
         "items": items,
+        "emitidos": emitidos_json,
+        "bloqueados": sorted(bloqueados, key=lambda r: r["nombre"]),
     }
 
 
-class DescargarIn(BaseModel):
-    year: int
-    dni: str
+class DocRef(BaseModel):
+    """Un documento: pendiente (dni + key) o ya emitido (id)."""
 
+    dni: str = ""
+    key: str = ""
+    id: int | None = None
 
-class ZipIn(BaseModel):
-    year: int
-    dnis: list[str]
-
-    @field_validator("dnis")
+    @field_validator("dni", "key")
     @classmethod
-    def dnis_ok(cls, v: list[str]) -> list[str]:
-        out = [str(x).strip() for x in v if str(x).strip()]
-        if not out:
-            raise ValueError("Elige al menos una persona.")
-        if len(out) > MAX_ZIP:
-            raise ValueError(f"Como máximo {MAX_ZIP} documentos por ZIP.")
-        return out
+    def trim(cls, v: str) -> str:
+        return (v or "").strip()
 
 
-@router.post("/descargar")
-def descargar_uno(
-    body: DescargarIn,
-    user: dict = Depends(require_admin),
-    empresa: list[str] | None = Query(default=None),
-    gerencia: list[str] | None = Query(default=None),
-    area: list[str] | None = Query(default=None),
-):
-    today = today_lima()
-    with get_conn() as conn:
-        cur = conn.cursor()
-        emp = _emp_recepcionado(cur, user, body.year, body.dni, empresa, gerencia, area)
-        daily_set, _ = load_scope_plan(cur, body.year, [emp])
-        pdf, name, escenario, current_hash, _periodos = _pdf_bytes(emp, body.year, daily_set, today)
-        _registrar(cur, body.year, emp["dni"], escenario, current_hash, user)
+class DocsIn(BaseModel):
+    year: int = Field(ge=2000, le=2100)
+    docs: list[DocRef] = Field(min_length=1, max_length=MAX_ZIP)
+
+
+def _resolver(cur, user: dict, year: int, ref: DocRef, today: date) -> tuple[dict, dict, list[date], list[int]]:
+    """(empleado, item, fechas del plan, ids en plan_documento). Registra la emisión si estaba pendiente."""
+    if ref.id is not None:
+        fila = load_emitido(cur, ref.id)
+        if not fila or int(fila["anio"]) != int(year):
+            raise HTTPException(404, "Ese documento no existe.")
+        emp = get_employee(cur, user, fila["dni"])
+        if not emp:
+            raise HTTPException(404, "No está en tu alcance.")
+        attach_jefes(cur, [emp])
+        daily_set, _t = load_scope_plan(cur, year, [emp])
+        item = reimpresion(cur, fila)
+        item["fecha_doc"] = fecha_de(fila.get("emitido_at"))
+        return emp, item, dates_for_dni_year(daily_set, emp["dni"], year), [int(fila["id"])]
+
+    emp = get_employee(cur, user, ref.dni)
+    if not emp:
+        raise HTTPException(404, "No está en tu alcance.")
+    attach_jefes(cur, [emp])
+    flujos = load_flujos(cur, year, [emp["dni"]])
+    if (flujos.get(emp["dni"]) or {}).get("estado") != RECEPCIONADO:
+        raise HTTPException(409, f"{emp['nombre']}: solo se emite de un plan ya recepcionado.")
+    lock_persona(cur, year, emp["dni"])
+    daily_set, _t = load_scope_plan(cur, year, [emp])
+    emitidos = load_emitidos(cur, year, [emp["dni"]])
+    items, dates, motivo = pendientes_por_dni([emp], daily_set, emitidos, year, today)[str(emp["dni"])]
+    if motivo:
+        raise HTTPException(409, f"{emp['nombre']}: {motivo}")
+    item = next((i for i in items if i["key"] == ref.key), None)
+    if not item:
+        raise HTTPException(
+            409,
+            f"{emp['nombre']}: ese documento ya se emitió o el plan cambió. Actualiza la lista.",
+        )
+    ids = registrar(cur, year, emp["dni"], item, user)
+    item["fecha_doc"] = today
+    return emp, item, dates, ids
+
+
+def _pdf(emp: dict, item: dict, year: int, dates: list[date]) -> tuple[bytes, str]:
+    try:
+        return render_item(emp, item, year=year, fecha_doc=item["fecha_doc"], programmed=dates)
+    except ValueError as exc:
+        raise HTTPException(400, f"{emp['nombre']}: {exc}") from exc
+
+
+def _pdf_response(pdf: bytes, name: str) -> Response:
     return Response(
         content=pdf,
         media_type="application/pdf",
@@ -234,54 +223,129 @@ def descargar_uno(
     )
 
 
-@router.post("/zip")
-def descargar_zip(
-    body: ZipIn,
-    user: dict = Depends(require_admin),
-    empresa: list[str] | None = Query(default=None),
-    gerencia: list[str] | None = Query(default=None),
-    area: list[str] | None = Query(default=None),
-):
+class UnoIn(BaseModel):
+    year: int = Field(ge=2000, le=2100)
+    doc: DocRef
+
+
+@router.post("/descargar")
+def descargar_uno(body: UnoIn, user: dict = Depends(require_admin)):
     today = today_lima()
-    wanted = set(body.dnis)
-    buf = BytesIO()
-    ok = 0
-    errors: list[str] = []
     with get_conn() as conn:
         cur = conn.cursor()
-        employees = list_employees(cur, user, empresa, gerencia, area, with_photos=False)
-        by_dni = {str(e["dni"]): e for e in employees if str(e["dni"]) in wanted}
-        missing = [d for d in body.dnis if d not in by_dni]
-        if missing:
-            raise HTTPException(404, f"No están en tu alcance: {', '.join(missing[:8])}.")
-        flujos = load_flujos(cur, body.year, list(by_dni))
-        recep = [by_dni[d] for d in body.dnis if (flujos.get(d) or {}).get("estado") == RECEPCIONADO]
-        if len(recep) != len(body.dnis):
-            raise HTTPException(409, "Solo se emite el PDF de planes ya recepcionados.")
-        daily_set, _ = load_scope_plan(cur, body.year, recep)
+        emp, item, dates, _ids = _resolver(cur, user, body.year, body.doc, today)
+        pdf, name = _pdf(emp, item, body.year, dates)
+    return _pdf_response(pdf, name)
+
+
+@router.post("/zip")
+def descargar_zip(body: DocsIn, user: dict = Depends(require_admin)):
+    today = today_lima()
+    buf = BytesIO()
+    with get_conn() as conn:
+        cur = conn.cursor()
         with ZipFile(buf, "w", ZIP_DEFLATED) as zf:
             used: set[str] = set()
-            for emp in recep:
-                try:
-                    pdf, name, escenario, current_hash, _p = _pdf_bytes(
-                        emp, body.year, daily_set, today
-                    )
-                except HTTPException as exc:
-                    errors.append(f"{emp.get('nombre') or emp['dni']}: {exc.detail}")
-                    continue
-                folder = TEMPLATES[escenario][1]
+            for ref in body.docs:
+                emp, item, dates, _ids = _resolver(cur, user, body.year, ref, today)
+                pdf, name = _pdf(emp, item, body.year, dates)
+                folder = TEMPLATES[item["escenario"]][1]
                 arc = f"{folder}/{name}"
                 if arc in used:
-                    arc = f"{folder}/{emp['dni']}_{name}"
+                    arc = f"{folder}/{len(used)}_{name}"
                 used.add(arc)
                 zf.writestr(arc, pdf)
-                _registrar(cur, body.year, emp["dni"], escenario, current_hash, user)
-                ok += 1
-    if ok == 0:
-        raise HTTPException(400, errors[0] if errors else "No se pudo armar ningún PDF.")
-    zipname = f"documentos_gth_{body.year}.zip"
     return Response(
         content=buf.getvalue(),
         media_type="application/zip",
-        headers={"Content-Disposition": f'attachment; filename="{zipname}"'},
+        headers={"Content-Disposition": f'attachment; filename="documentos_gth_{body.year}.zip"'},
+    )
+
+
+def _periodo_texto(item: dict) -> str:
+    tramo = item.get("tramo")
+    if tramo:
+        return f"del {tramo['inicio'].strftime('%d/%m/%Y')} al {tramo['fin'].strftime('%d/%m/%Y')}"
+    periodos = item.get("periodos") or []
+    return f"{len(periodos)} períodos, {sum(int(p['dias']) for p in periodos)} días"
+
+
+class EnvioIn(BaseModel):
+    year: int = Field(ge=2000, le=2100)
+    docs: list[DocRef] = Field(min_length=1, max_length=MAX_ENVIO)
+
+
+@router.post("/enviar")
+def enviar_por_correo(body: EnvioIn, user: dict = Depends(require_admin)):
+    """Emite (si falta) y envía cada PDF al correo del trabajador, con copia a Personas y Cultura.
+
+    Cada documento se confirma por separado: si un correo falla, lo ya enviado queda registrado.
+    """
+    if not mail_configured():
+        raise HTTPException(
+            409,
+            "El envío por correo aún no está configurado en el servidor (SMTP). "
+            "Descarga el PDF y entrégalo mientras tanto.",
+        )
+    today = today_lima()
+    enviados: list[dict] = []
+    errores: list[str] = []
+    try:
+        with Mailer() as mailer:
+            for ref in body.docs:
+                with get_conn() as conn:
+                    cur = conn.cursor()
+                    try:
+                        emp, item, dates, ids = _resolver(cur, user, body.year, ref, today)
+                    except HTTPException as exc:
+                        errores.append(str(exc.detail))
+                        continue
+                    destino, fuente = correos_trabajador(cur, emp)
+                    if not destino:
+                        _marcar_envio(cur, ids, "", "Sin correo registrado en Cubis.")
+                        errores.append(f"{emp['nombre']}: no tiene correo registrado (se emitió igual).")
+                        continue
+                    pdf, name = _pdf(emp, item, body.year, dates)
+                    textos = load_mensajes(cur)
+                    valores = {
+                        "nombre": emp.get("nombre") or "",
+                        "documento": item["titulo"],
+                        "periodo": _periodo_texto(item),
+                        "dias": (item.get("tramo") or {}).get("dias")
+                        or sum(int(p["dias"]) for p in item.get("periodos") or []),
+                        "dni": emp.get("dni") or "",
+                    }
+                    try:
+                        mailer.enviar(
+                            Correo(
+                                para=[destino],
+                                cc=cc_fijo(),
+                                asunto=rellenar(textos["doc_asunto"], valores),
+                                cuerpo=rellenar(textos["doc_cuerpo"], valores),
+                                adjuntos=[Adjunto(name, pdf)],
+                            )
+                        )
+                    except MailError as exc:
+                        _marcar_envio(cur, ids, destino, str(exc))
+                        errores.append(f"{emp['nombre']}: {exc}")
+                        continue
+                    _marcar_envio(cur, ids, destino, "")
+                    enviados.append({"dni": emp["dni"], "nombre": emp["nombre"], "correo": destino, "fuente": fuente})
+    except MailError as exc:
+        raise HTTPException(502, str(exc)) from exc
+    return {"enviados": len(enviados), "detalle": enviados, "errores": errores}
+
+
+def _marcar_envio(cur, ids: list[int], destino: str, error: str) -> None:
+    if not ids:
+        return
+    if error:
+        cur.execute(
+            "UPDATE plan_documento SET envio_error = %s WHERE id = ANY(%s)",
+            (error[:500], ids),
+        )
+        return
+    cur.execute(
+        "UPDATE plan_documento SET enviado_at = NOW(), enviado_a = %s, envio_error = '' WHERE id = ANY(%s)",
+        (destino, ids),
     )

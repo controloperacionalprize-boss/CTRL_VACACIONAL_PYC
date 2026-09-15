@@ -1,9 +1,10 @@
-"""Documentos GTH en HTML (vista previa) y PDF (descarga)."""
+"""Documentos de Personas y Cultura en HTML (vista previa) y PDF (descarga)."""
 
 from __future__ import annotations
 
 import base64
 import html
+import re
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
@@ -144,7 +145,7 @@ def _encabezado_solicitud(titulo: str, ctx: DocContext):
     yield "meta", "Atención:"
     yield "meta", (ctx.jefe or "").strip() or "Nombre del jefe de sub área o jefe inmediato"
     yield "meta", (ctx.cargo_jefe or "").strip() or "(Cargo)"
-    yield "meta", "Cc: Sub Gerencia de Personas & Cultura"
+    yield "meta", "Cc: Sub Gerencia de Personas y Cultura"
     yield "meta", "Área Administración de Personal- Remuneraciones"
 
 
@@ -180,7 +181,7 @@ def _firmas_acuerdo(ctx: DocContext, *, empleador_primero: bool = True):
 
 def _firmas_memorando(_ctx: DocContext):
     yield "signs", (
-        SignCol("", "", "SUB GERENCIA DE PERSONAS & CULTURA"),
+        SignCol("", "", "SUB GERENCIA DE PERSONAS Y CULTURA"),
         SignCol("", "", "FIRMA Y HUELLA DEL TRABAJADOR"),
     )
 
@@ -280,6 +281,8 @@ def _esc_fraccionamiento(ctx: DocContext):
     )
     yield from _firmas_acuerdo(ctx, empleador_primero=False)
 
+    if not ctx.memorando:
+        return
     yield "break", None
     yield from _esc_memorando(
         ctx,
@@ -311,6 +314,7 @@ def _esc_fraccionamiento(ctx: DocContext):
 
 def _esc_modificacion(ctx: DocContext):
     anteriores = ctx.periodos_anteriores or ctx.periodos
+    fecha_convenio = fecha_larga(ctx.fecha_convenio or ctx.fecha)
     yield "logo", None
     yield from _encabezado_solicitud(
         "SOLICITUD DE MODIFICACIÓN DE FRACCIONAMIENTO DE DESCANSO VACACIONAL", ctx
@@ -318,7 +322,7 @@ def _esc_modificacion(ctx: DocContext):
     yield "p", "Estimados Señores:"
     yield "p", (
         "Por intermedio de la presente, solicito a su despacho la modificación del Acuerdo común "
-        f"de fraccionamiento de descanso vacacional, de fecha {fecha_larga(ctx.fecha)}, del récord "
+        f"de fraccionamiento de descanso vacacional, de fecha {fecha_convenio}, del récord "
         f"vacacional {ctx.record}, según la siguiente propuesta:"
     )
     yield "table", _period_rows(ctx.periodos)
@@ -350,7 +354,7 @@ def _esc_modificacion(ctx: DocContext):
     yield "p", f"Segundo: {ART8}"
     yield "h2", "Tercero: ANTECEDENTES"
     yield "p", (
-        f"Con fecha {fecha_larga(ctx.fecha)}, El TRABAJADOR solicitó el fraccionamiento del "
+        f"Con fecha {fecha_convenio}, El TRABAJADOR solicitó el fraccionamiento del "
         f"descanso vacacional del récord {ctx.record}; solicitud que fue aprobada por el EMPLEADOR "
         "y, de común acuerdo, decidieron establecer como periodos fraccionados de vacaciones del "
         f"récord {ctx.record}, los siguientes:"
@@ -373,6 +377,8 @@ def _esc_modificacion(ctx: DocContext):
     )
     yield from _firmas_acuerdo(ctx)
 
+    if not ctx.memorando:
+        return
     yield "break", None
     yield from _esc_memorando(
         ctx,
@@ -400,7 +406,7 @@ def _esc_adelanto(ctx: DocContext):
     yield "meta", "Atención:"
     yield "meta", (ctx.jefe or "").strip() or "Nombre del jefe de sub área o jefe inmediato"
     yield "meta", (ctx.cargo_jefe or "").strip() or "(Cargo)"
-    yield "meta", "Cc: Sub Gerencia de Personas & Cultura."
+    yield "meta", "Cc: Sub Gerencia de Personas y Cultura."
     yield "meta", "Área Administración de Personal- Remuneraciones"
     yield "p", "Estimados Sres.:"
     yield "p", (
@@ -518,30 +524,30 @@ def render_html(escenario: int, ctx: DocContext) -> str:
     logo = _logo_data_uri()
     chunks: list[str] = [
         "<!DOCTYPE html><html lang='es'><head><meta charset='utf-8'/>",
-        "<title>Documento GTH</title><style>",
+        "<title>Documento de Personas y Cultura</title><style>",
         """
-        @page { size: A4; margin: 14mm 16mm 16mm 16mm; }
+        @page { size: A4; margin: 12mm 15mm 14mm 15mm; }
         * { box-sizing: border-box; }
-        body { font-family: 'Calibri', 'Segoe UI', Arial, sans-serif; font-size: 11.5px; color: #1a1a1a; line-height: 1.45; margin: 0; background: #e8e8e8; }
-        .sheet { width: 210mm; min-height: 297mm; margin: 12px auto; padding: 16mm 18mm 20mm; background: #fff; box-shadow: 0 2px 10px rgba(0,0,0,.12); }
-        .logo { height: 52px; }
-        h1 { font-size: 13.5px; letter-spacing: .04em; text-align: center; margin: 10px 0 18px; }
-        h2 { font-size: 11.5px; margin: 16px 0 10px; }
-        p { margin: 0 0 10px; text-align: justify; }
-        .meta { margin: 0 0 4px; text-align: left; }
-        .meta + p { margin-top: 14px; }
-        h2 + p { margin-top: 4px; }
-        table { width: 100%; border-collapse: collapse; margin: 10px 0 14px; font-size: 11px; }
-        th, td { border: 1px solid #333; padding: 5px 7px; }
+        body { font-family: 'Calibri', 'Segoe UI', Arial, sans-serif; font-size: 10.5px; color: #1a1a1a; line-height: 1.38; margin: 0; background: #e8e8e8; }
+        .sheet { width: 210mm; min-height: 297mm; margin: 12px auto; padding: 12mm 16mm 16mm; background: #fff; box-shadow: 0 2px 10px rgba(0,0,0,.12); }
+        .logo { height: 40px; }
+        h1 { font-size: 12.5px; letter-spacing: .04em; text-align: center; margin: 6px 0 10px; }
+        h2 { font-size: 10.5px; margin: 10px 0 6px; }
+        p { margin: 0 0 7px; text-align: justify; }
+        .meta { margin: 0 0 2px; text-align: left; }
+        .meta + p { margin-top: 8px; }
+        h2 + p { margin-top: 2px; }
+        table { width: 100%; border-collapse: collapse; margin: 6px 0 8px; font-size: 10px; }
+        th, td { border: 1px solid #333; padding: 3px 6px; }
         th { background: #f2f2f2; }
-        .signs { display: flex; gap: 28px; margin-top: 12px; align-items: flex-end; }
+        .signs { display: flex; gap: 22px; margin-top: 10mm; align-items: flex-end; page-break-inside: avoid; break-inside: avoid; }
         .sign { flex: 1; text-align: center; }
         .signs.one { justify-content: center; }
         .signs.one .sign { flex: 0 0 72mm; max-width: 72mm; }
-        .sign-gap { height: 28mm; width: 100%; flex-shrink: 0; }
-        .sign .line { border-top: 1px solid #111; margin: 0 12px 8px; }
+        .sign-gap { height: 18mm; width: 100%; flex-shrink: 0; }
+        .sign .line { border-top: 1px solid #111; margin: 0 12px 6px; }
         .sign .name { font-weight: 700; }
-        .sign .rol { font-size: 10px; margin-top: 2px; }
+        .sign .rol { font-size: 9px; margin-top: 1px; }
         @media print { body { background: #fff; } .sheet { margin: 0; box-shadow: none; page-break-after: always; } }
         """,
         "</style></head><body>",
@@ -567,7 +573,7 @@ def render_html(escenario: int, ctx: DocContext) -> str:
         ensure_sheet()
         if kind == "logo":
             if logo:
-                chunks.append(f"<img class='logo' alt='GTH' src='{logo}'/>")
+                chunks.append(f"<img class='logo' alt='Personas y Cultura' src='{logo}'/>")
         elif kind == "title":
             chunks.append(f"<h1>{html.escape(str(payload))}</h1>")
         elif kind == "h2":
@@ -610,22 +616,33 @@ class _GthPdf(FPDF):
         self.set_text_color(26, 26, 26)
 
 
+def pdf_page_count(data: bytes) -> int:
+    """Páginas de un PDF generado con fpdf2 (no cuenta el nodo /Pages)."""
+    return len(re.findall(rb"/Type /Page(?!s)", data))
+
+
 def render_pdf(escenario: int, ctx: DocContext) -> bytes:
     pdf = _GthPdf(format="A4", unit="mm")
-    bottom = 16
+    bottom = 14
     pdf.set_auto_page_break(auto=True, margin=bottom)
     pdf.add_font("DejaVu", "", str(FONTS_DIR / "DejaVuSans.ttf"))
     pdf.add_font("DejaVu", "B", str(FONTS_DIR / "DejaVuSans-Bold.ttf"))
     pdf.add_font("DejaVu", "I", str(FONTS_DIR / "DejaVuSans-Oblique.ttf"))
-    pdf.set_margins(18, 14, 18)
-    heading = FontFace(emphasis="BOLD", size_pt=9)
-    body_h = 5.5
-    meta_h = 5.2
+    pdf.set_margins(16, 12, 16)
+    heading = FontFace(emphasis="BOLD", size_pt=8.5)
+    body_size = 10
+    body_h = 4.7
+    meta_h = 4.5
+    # Aire tras el texto + hueco para firmar. Si no cabe el de 22 mm, se achica
+    # hasta 16 mm; por debajo de eso salta de hoja (evita pegar la raya al párrafo).
+    sign_air = 6
+    sign_spacer = 22
+    sign_spacer_min = 16
     prev = ""
 
     def new_page():
         pdf.add_page()
-        pdf.set_font("DejaVu", "", 10.5)
+        pdf.set_font("DejaVu", "", body_size)
         pdf.set_text_color(26, 26, 26)
 
     def room_left() -> float:
@@ -640,7 +657,7 @@ def render_pdf(escenario: int, ctx: DocContext) -> bytes:
         for col in cols:
             n = sum(1 for part in (col.nombre, col.linea2, col.rol) if part)
             lines = max(lines, n)
-        return 6 + lines * 4.8
+        return 5 + lines * 4.2
 
     new_page()
     usable = pdf.w - pdf.l_margin - pdf.r_margin
@@ -652,24 +669,24 @@ def render_pdf(escenario: int, ctx: DocContext) -> bytes:
             continue
         if kind == "logo":
             if LOGO_PATH.is_file():
-                need(20)
-                pdf.image(str(LOGO_PATH), x=pdf.l_margin, y=pdf.get_y(), h=15)
-                pdf.ln(18)
+                need(16)
+                pdf.image(str(LOGO_PATH), x=pdf.l_margin, y=pdf.get_y(), h=12)
+                pdf.ln(14)
             prev = kind
             continue
         if kind == "title":
-            pdf.set_font("DejaVu", "B", 12)
-            pdf.multi_cell(usable, 6, str(payload), align="C", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-            pdf.ln(7)
-            pdf.set_font("DejaVu", "", 10.5)
+            pdf.set_font("DejaVu", "B", 11.5)
+            pdf.multi_cell(usable, 5.4, str(payload), align="C", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+            pdf.ln(4)
+            pdf.set_font("DejaVu", "", body_size)
             prev = kind
             continue
         if kind == "h2":
-            pdf.ln(4)
-            pdf.set_font("DejaVu", "B", 10.5)
+            pdf.ln(2)
+            pdf.set_font("DejaVu", "B", body_size)
             pdf.multi_cell(usable, body_h, str(payload), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-            pdf.ln(2.5)
-            pdf.set_font("DejaVu", "", 10.5)
+            pdf.ln(1.5)
+            pdf.set_font("DejaVu", "", body_size)
             prev = kind
             continue
         if kind == "meta":
@@ -678,20 +695,20 @@ def render_pdf(escenario: int, ctx: DocContext) -> bytes:
             continue
         if kind == "p":
             if prev in {"title", "meta"}:
-                pdf.ln(4)
+                pdf.ln(2.5)
             pdf.multi_cell(usable, body_h, str(payload), align="J", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-            pdf.ln(1.6)
+            pdf.ln(1.1)
             prev = kind
             continue
         if kind == "table":
             rows = 1 + len(payload)
-            need(6 + rows * 7)
-            pdf.ln(1.5)
+            need(5 + rows * 6)
+            pdf.ln(1)
             with pdf.table(
                 col_widths=(48, 22, 40, 48),
                 text_align=("LEFT", "CENTER", "CENTER", "CENTER"),
                 headings_style=heading,
-                line_height=6.4,
+                line_height=5.4,
             ) as table:
                 hdr = table.row()
                 for cell in ("PERIODOS", "DÍAS", "FECHA INICIO", "FECHA DE TÉRMINO"):
@@ -700,21 +717,28 @@ def render_pdf(escenario: int, ctx: DocContext) -> bytes:
                     row = table.row()
                     for cell in row_vals:
                         row.cell(cell)
-            pdf.ln(2.5)
+            pdf.ln(1.6)
             prev = kind
             continue
         if kind == "signs":
             cols: tuple[SignCol, ...] = payload
             n = max(len(cols), 1)
-            # Hueco para firmar a mano (encima de la raya), no pegado al texto.
-            spacer = 28
             labels = sign_h(cols)
             pdf.set_auto_page_break(auto=False)
-            if room_left() < spacer + labels + 2:
+            leftover = room_left()
+            needed = sign_air + sign_spacer + labels + 2
+            compact = sign_air + sign_spacer_min + labels + 2
+            if leftover >= needed:
+                air, spacer = sign_air, sign_spacer
+            elif leftover >= compact:
+                air = sign_air
+                spacer = max(sign_spacer_min, leftover - air - labels - 2)
+            else:
                 pdf.set_auto_page_break(auto=True, margin=bottom)
                 new_page()
                 pdf.set_auto_page_break(auto=False)
-            y0 = pdf.get_y() + spacer
+                air, spacer = sign_air, sign_spacer
+            y0 = pdf.get_y() + air + spacer
             if n == 1:
                 col_w = 72
                 x_base = pdf.l_margin + (usable - col_w) / 2
@@ -726,24 +750,24 @@ def render_pdf(escenario: int, ctx: DocContext) -> bytes:
                 line_w = min(62, col_w - 10)
                 pdf.set_xy(x + (col_w - line_w) / 2, y0)
                 pdf.cell(line_w, 1, border="T")
-                y = y0 + 5
+                y = y0 + 4
                 if col.nombre:
                     pdf.set_xy(x, y)
-                    pdf.set_font("DejaVu", "B", 9)
-                    pdf.multi_cell(col_w, 4.5, col.nombre, align="C", new_x=XPos.LEFT, new_y=YPos.NEXT)
+                    pdf.set_font("DejaVu", "B", 8.5)
+                    pdf.multi_cell(col_w, 4.1, col.nombre, align="C", new_x=XPos.LEFT, new_y=YPos.NEXT)
                     y = pdf.get_y()
                 if col.linea2:
                     pdf.set_xy(x, y)
-                    pdf.set_font("DejaVu", "", 8.5)
-                    pdf.multi_cell(col_w, 4.4, col.linea2, align="C", new_x=XPos.LEFT, new_y=YPos.NEXT)
+                    pdf.set_font("DejaVu", "", 8)
+                    pdf.multi_cell(col_w, 4.0, col.linea2, align="C", new_x=XPos.LEFT, new_y=YPos.NEXT)
                     y = pdf.get_y()
                 if col.rol:
                     pdf.set_xy(x, y)
-                    pdf.set_font("DejaVu", "B" if not col.nombre else "", 9 if not col.nombre else 8.5)
-                    pdf.multi_cell(col_w, 4.4, col.rol, align="C", new_x=XPos.LEFT, new_y=YPos.NEXT)
+                    pdf.set_font("DejaVu", "B" if not col.nombre else "", 8.5 if not col.nombre else 8)
+                    pdf.multi_cell(col_w, 4.0, col.rol, align="C", new_x=XPos.LEFT, new_y=YPos.NEXT)
             pdf.set_auto_page_break(auto=True, margin=bottom)
             pdf.set_y(y0 + labels)
-            pdf.set_font("DejaVu", "", 10.5)
+            pdf.set_font("DejaVu", "", body_size)
             prev = kind
 
     buf = BytesIO()

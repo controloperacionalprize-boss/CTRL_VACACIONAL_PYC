@@ -7,6 +7,7 @@ import { Alert, Button, EmptyState, Field, PageHeader, Select, cn } from "../com
 import { formatFechaIso } from "../lib/dates";
 import { findAlert, prioridadClass, prioridadLabel, type AlertItem, type AlertPersona } from "../lib/alerts";
 import { flujoEstadoLabel } from "../lib/vacaciones";
+import { AvisoJefaturas } from "./alertas/AvisoJefaturas";
 
 const PAGE_SIZES = [10, 25, 50] as const;
 const FLUJO_FILTRO = ["BORRADOR", "ENVIADO", "VALIDADO", "RECEPCIONADO", "OBSERVADO"] as const;
@@ -66,6 +67,7 @@ export function AlertasPage() {
           title="Alertas"
           help="Situaciones de tu alcance: récords por vencer, vacaciones del mes siguiente y lo que te toca en bandeja."
         />
+        {user?.is_admin ? <AvisoJefaturas /> : null}
         <EmptyState
           title="Nada requiere tu acción ahora"
           body="No hay récords por vencer en 3 meses, ni vacaciones el próximo mes en la última semana, ni planes esperándote en bandeja."
@@ -80,6 +82,7 @@ export function AlertasPage() {
         title="Alertas"
         help="Elige un grupo y abre el listado completo. El botón de arriba lleva a todas las personas de esa alerta, no a un caso suelto."
       />
+      {user?.is_admin ? <AvisoJefaturas /> : null}
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {items.map((item) => {

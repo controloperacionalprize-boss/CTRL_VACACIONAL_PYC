@@ -1,4 +1,4 @@
-"""Rellena las plantillas Word fijas (GTH) con datos del trabajador y del plan."""
+"""Rellena las plantillas Word fijas (Personas y Cultura) con datos del trabajador y del plan."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.table import Table
 
-from .calendar import DERECHO_ANUAL, parse_iso_date, vacation_record_for
+from .calendar import parse_iso_date, vacation_record_for
 from ..textnorm import strip_marks
 
 TEMPLATES_DIR = Path(__file__).resolve().parents[1] / "data" / "templates"
@@ -25,13 +25,6 @@ TEMPLATES = {
     2: ("escenario_2_fraccionamiento.docx", "Fraccionamiento_vacacional"),
     3: ("escenario_3_modificacion.docx", "Modificacion_fraccionamiento"),
     4: ("escenario_4_adelanto.docx", "Adelanto_de_vacaciones"),
-}
-
-TITULOS = {
-    1: "Memorando de vacaciones",
-    2: "Fraccionamiento de descanso vacacional",
-    3: "Modificación de fraccionamiento",
-    4: "Adelanto de goce de vacaciones",
 }
 
 # Compacto (sin espacios) después de _norm_empresa. II va primero.
@@ -77,6 +70,10 @@ class DocContext:
     derecho_desde: date | None
     periodos: tuple[dict, ...]
     periodos_anteriores: tuple[dict, ...]
+    # Fraccionamiento / modificación: si el PDF lleva el memorando del tramo inicio–fin.
+    memorando: bool = True
+    # Modificación: fecha del convenio original (antecedente). Sin dato se usa `fecha`.
+    fecha_convenio: date | None = None
 
 
 def _norm_empresa(empresa: str) -> str:
@@ -92,21 +89,6 @@ def empresa_legal(empresa: str) -> tuple[str, str]:
         if compact in aliases:
             return razon, ruc
     return (empresa or "").strip(), ""
-
-
-def infer_escenario(*, es_adelanto: bool, moved: bool, period_sizes: list[int]) -> int:
-    if moved:
-        return 3
-    if es_adelanto:
-        return 4
-    if len(period_sizes) == 1 and period_sizes[0] == DERECHO_ANUAL:
-        return 1
-    return 2
-
-
-def documento_meta(*, es_adelanto: bool, moved: bool, period_sizes: list[int]) -> dict:
-    escenario = infer_escenario(es_adelanto=es_adelanto, moved=moved, period_sizes=period_sizes)
-    return {"escenario": escenario, "titulo": TITULOS[escenario]}
 
 
 def fecha_larga(d: date) -> str:
@@ -318,11 +300,18 @@ def build_context(
     periodos: list[dict],
     periodos_anteriores: list[dict] | None = None,
     programmed: list[date] | None = None,
+    memorando: bool = True,
+    fecha_convenio: date | None = None,
 ) -> DocContext:
     ingreso = parse_iso_date(emp.get("fecha_ingreso"))
     rec = vacation_record_for(ingreso, programmed or [], year, today)
     jefatura = (emp.get("jefatura") or "").strip()
     gerencia = (emp.get("gerencia") or "").strip()
+    # "Atención:" va dirigido a una persona. Si se conoce un único jefe del área, su nombre;
+    # si hay varios (vienen unidos con " · ") o ninguno, el nombre de la jefatura como antes.
+    jefe_nombre = (emp.get("jefe_nombre") or "").strip()
+    if " · " in jefe_nombre:
+        jefe_nombre = ""
     razon, ruc = empresa_legal((emp.get("empresa") or "").strip())
     cumple = rec.get("cumple_record")
     return DocContext(
@@ -331,8 +320,12 @@ def build_context(
         dni=str(emp.get("dni") or "").strip(),
         empresa=razon,
         ruc=ruc,
-        jefe=jefatura,
-        cargo_jefe=gerencia or (f"Jefe de {jefatura}" if jefatura else ""),
+        jefe=jefe_nombre or jefatura,
+        cargo_jefe=(
+            f"Jefe de {jefatura}"
+            if jefe_nombre and jefatura
+            else gerencia or (f"Jefe de {jefatura}" if jefatura else "")
+        ),
         record=rec.get("record_vacacional") or f"{year - 1}-{year}",
         inicio=inicio,
         fin=fin,
@@ -340,6 +333,8 @@ def build_context(
         derecho_desde=cumple if isinstance(cumple, date) else None,
         periodos=tuple(periodos),
         periodos_anteriores=tuple(periodos_anteriores or []),
+        memorando=memorando,
+        fecha_convenio=fecha_convenio,
     )
 
 
@@ -438,17 +433,3 @@ def filename_for(escenario: int, ctx: DocContext) -> str:
     _name, slug = TEMPLATES[escenario]
     safe_dni = re.sub(r"[^0-9A-Za-z]", "", ctx.dni) or "trabajador"
     return f"{slug}_{safe_dni}_{ctx.inicio.isoformat()}.docx"
-
-
-def reconstruct_old_periods(
-    new_periods: list[dict], old_start: date, new_start: date
-) -> list[dict]:
-    out: list[dict] = []
-    for p in new_periods:
-        if p["inicio"] == new_start:
-            delta = p["fin"] - p["inicio"]
-            out.append({"inicio": old_start, "fin": old_start + delta, "dias": p["dias"]})
-        else:
-            out.append(dict(p))
-    out.sort(key=lambda x: x["inicio"])
-    return out

@@ -6,6 +6,7 @@ import { useApp } from "../state";
 import { SnakeTimeline, type SnakePaso } from "../components/SnakeTimeline";
 import { Alert, Button, EmptyState, Field, Input, PageHeader, Select } from "../components/ui";
 import { EmpleadosRoster } from "./admin/EmpleadosRoster";
+import { MensajesCorreo } from "./admin/MensajesCorreo";
 
 type AppUser = {
   correo: string;
@@ -53,8 +54,8 @@ const emptyForm = {
 
 const ROLES = [
   { value: "GERENTE", label: "Gerente (división)" },
-  { value: "JEFE", label: "Jefe (área)" },
-  { value: "ADMIN", label: "Administrador" },
+  { value: "JEFE", label: "Jefe / coordinador (área)" },
+  { value: "ADMIN", label: "Personas y Cultura (administrador)" },
   { value: "USER", label: "Gerente (legado)" },
 ];
 
@@ -229,7 +230,7 @@ function ThreadCard({
 
 export function AdminPage() {
   const { user, filters } = useApp();
-  const [tab, setTab] = useState<"users" | "logs" | "empleados">("users");
+  const [tab, setTab] = useState<"users" | "logs" | "empleados" | "mensajes">("users");
   const [users, setUsers] = useState<AppUser[]>([]);
   const [gerencias, setGerencias] = useState<string[]>([]);
   const [areas, setAreas] = useState<string[]>([]);
@@ -380,6 +381,9 @@ export function AdminPage() {
         </Button>
         <Button variant={tab === "logs" ? "primary" : "outline"} onClick={() => setTab("logs")} className="shrink-0">
           Historial de cambios
+        </Button>
+        <Button variant={tab === "mensajes" ? "primary" : "outline"} onClick={() => setTab("mensajes")} className="shrink-0">
+          Mensajes de correo
         </Button>
       </div>
 
@@ -573,6 +577,8 @@ export function AdminPage() {
         </>
       ) : tab === "empleados" ? (
         <EmpleadosRoster />
+      ) : tab === "mensajes" ? (
+        <MensajesCorreo />
       ) : (
         <>
           <Input

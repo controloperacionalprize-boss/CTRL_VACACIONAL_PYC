@@ -47,14 +47,19 @@ export function lockReasonFor(w: Worker) {
   return "";
 }
 
-/** Edición local; confirma solo con Enter o al salir de la celda. */
+const CELL_TITLE = `0–${MAX_VAC_DAYS} días. Enter o clic fuera para guardar (más de 7 se reparte en semanas siguientes).`;
+
+/**
+ * Celda de semana. En reposo es un botón sin estado; el <input> solo existe mientras se edita.
+ * Con cientos de filas × 53 semanas, montar un input con estado y efecto por celda era lo que
+ * más CPU consumía al cargar o refrescar la grilla.
+ */
 const WeekInput = memo(function WeekInput({
   value,
   week,
   worker,
   onCommit,
   className,
-  disabled,
   saving,
 }: {
   value: number;
@@ -62,64 +67,99 @@ const WeekInput = memo(function WeekInput({
   worker: Worker;
   onCommit: (w: Worker, week: number, days: number) => void;
   className: string;
-  disabled?: boolean;
   saving?: boolean;
 }) {
+  const [editing, setEditing] = useState(false);
+  const background = value ? cellColor(value) : "transparent";
+
+  if (!editing || saving) {
+    return (
+      <button
+        type="button"
+        disabled={saving}
+        title={saving ? "Guardando…" : CELL_TITLE}
+        // onFocus cubre Tab; onClick hace falta porque Safari (Mac/iPhone) y Firefox en Mac
+        // no enfocan un <button> al hacer clic o tocarlo.
+        onFocus={() => setEditing(true)}
+        onClick={() => setEditing(true)}
+        className={cn(className, saving && "animate-pulse", !value && "text-muted-foreground/60")}
+        style={{ background }}
+      >
+        {saving ? "…" : value}
+      </button>
+    );
+  }
+  return (
+    <WeekEditor
+      value={value}
+      className={className}
+      background={background}
+      onDone={(days) => {
+        setEditing(false);
+        if (days !== null && days !== value) onCommit(worker, week, days);
+      }}
+    />
+  );
+});
+
+function WeekEditor({
+  value,
+  className,
+  background,
+  onDone,
+}: {
+  value: number;
+  className: string;
+  background: string;
+  onDone: (days: number | null) => void;
+}) {
   const [draft, setDraft] = useState(String(value));
-  const committedRef = useRef(value);
+  const ref = useRef<HTMLInputElement>(null);
+  // Algunos navegadores disparan blur al desmontar: sin esto, Escape terminaría guardando.
+  const closed = useRef(false);
 
   useEffect(() => {
-    committedRef.current = value;
-    setDraft(String(value));
-  }, [value]);
+    ref.current?.focus();
+    ref.current?.select();
+  }, []);
 
-  function commit(raw: string) {
-    const prev = committedRef.current;
-    if (raw.trim() === "") {
-      setDraft(String(prev));
-      return;
-    }
+  function finish(days: number | null) {
+    if (closed.current) return;
+    closed.current = true;
+    onDone(days);
+  }
+
+  function parse(raw: string): number | null {
+    if (raw.trim() === "") return null;
     const n = Number(raw);
-    if (!Number.isFinite(n)) {
-      setDraft(String(prev));
-      return;
-    }
-    const clamped = Math.max(0, Math.min(MAX_VAC_DAYS, Math.round(n)));
-    if (clamped !== prev) {
-      onCommit(worker, week, clamped);
-      setDraft(String(prev));
-      return;
-    }
-    setDraft(String(clamped));
+    if (!Number.isFinite(n)) return null;
+    return Math.max(0, Math.min(MAX_VAC_DAYS, Math.round(n)));
   }
 
   return (
     <input
+      ref={ref}
       type="number"
       min={0}
       max={MAX_VAC_DAYS}
-      disabled={disabled || saving}
-      title={
-        saving
-          ? "Guardando…"
-          : `0–${MAX_VAC_DAYS} días. Enter o clic fuera para guardar (más de 7 se reparte en semanas siguientes).`
-      }
-      value={saving ? "…" : draft}
+      title={CELL_TITLE}
+      value={draft}
       onChange={(e) => setDraft(e.target.value)}
       onKeyDown={(e) => {
-        if (e.key !== "Enter") return;
-        e.preventDefault();
-        (e.target as HTMLInputElement).blur();
+        if (e.key === "Escape") {
+          e.preventDefault();
+          finish(null);
+        } else if (e.key === "Enter") {
+          e.preventDefault();
+          e.currentTarget.blur();
+        }
       }}
-      onBlur={(e) => {
-        if (disabled || saving) return;
-        commit(e.target.value);
-      }}
-      className={cn(className, saving && "animate-pulse")}
-      style={{ background: value ? cellColor(value) : "transparent" }}
+      onBlur={(e) => finish(parse(e.target.value))}
+      className={className}
+      style={{ background }}
     />
   );
-});
+}
 
 export const WorkerRow = memo(function WorkerRow({
   w,

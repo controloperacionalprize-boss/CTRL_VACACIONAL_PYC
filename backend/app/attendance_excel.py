@@ -490,12 +490,6 @@ def schedule_excel_refresh(*, force: bool = False) -> None:
     Thread(target=_refresh_worker, name="excel-asistencia", daemon=True).start()
 
 
-def warmup_excel_cache() -> None:
-    """Al arrancar o al iniciar sesión: una descarga si aún no hay datos de hoy."""
-    if excel_attendance_configured():
-        schedule_excel_refresh()
-
-
 def fetch_excel_attendance_dates(dni: str, year: int) -> set[date]:
     snap = _snapshot()
     if not snap.get("ok") or snap.get("loaded_day") != _lima_today():

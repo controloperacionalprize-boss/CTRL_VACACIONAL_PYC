@@ -5,6 +5,8 @@ from pydantic import BaseModel, field_validator, model_validator
 
 from ..auth import require_admin
 from ..db import get_conn
+from ..mailer import cc_fijo, mail_configured
+from ..mensajes import DEFAULTS, VARIABLES, load_mensajes, save_mensajes
 from ..photos import coverage_report, picture_index, resolve_foto_url
 from ..org_scope import ROLES, division_for_area, resolve_division
 from ..services import list_employees
@@ -303,6 +305,36 @@ def timeline(year: int, user: dict = Depends(require_admin)):
         )
     threads.sort(key=lambda t: t["nombre"].casefold())
     return {"year": year, "total": len(rows), "threads": threads}
+
+
+class MensajesIn(BaseModel):
+    doc_asunto: str | None = None
+    doc_cuerpo: str | None = None
+    jefe_asunto: str | None = None
+    jefe_cuerpo: str | None = None
+
+
+@router.get("/mensajes")
+def get_mensajes(user: dict = Depends(require_admin)):
+    with get_conn(write=False) as conn:
+        mensajes = load_mensajes(conn.cursor())
+    return {
+        "mensajes": mensajes,
+        "defaults": DEFAULTS,
+        "variables": VARIABLES,
+        "correo_activo": mail_configured(),
+        "copia": cc_fijo(),
+    }
+
+
+@router.put("/mensajes")
+def put_mensajes(body: MensajesIn, user: dict = Depends(require_admin)):
+    data = {k: v for k, v in body.model_dump().items() if v is not None}
+    if not data:
+        raise HTTPException(400, "No hay cambios.")
+    with get_conn() as conn:
+        mensajes = save_mensajes(conn.cursor(), data, user)
+    return {"ok": True, "mensajes": mensajes}
 
 
 @router.get("/photos/coverage")

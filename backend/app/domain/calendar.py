@@ -5,7 +5,7 @@ from datetime import date, datetime, timedelta
 from typing import Iterable
 from zoneinfo import ZoneInfo
 
-# Exclusiones futuras: DNIs que saltan   (solo lun–vie).
+# DNIs que solo gozan días hábiles (lun–vie). Hoy vacío: todos son días corridos.
 DNI_SOLO_DIAS_HABILES: frozenset[str] = frozenset()
 MIN_DIAS = 0
 MAX_DIAS = 7
@@ -172,10 +172,13 @@ def count_days_in_record(
     anchor: date,
     fecha_ingreso: date | None,
     exclude: Iterable[date] | None = None,
+    *,
+    dates: list[date] | None = None,
 ) -> int:
     skip = set(exclude or ())
     start = record_period_start(fecha_ingreso, anchor)
-    fechas = (d for d in dates_for_dni_year(daily_set, dni, year) if d not in skip)
+    source = dates if dates is not None else dates_for_dni_year(daily_set, dni, year)
+    fechas = (d for d in source if d not in skip)
     return days_by_record(fechas, fecha_ingreso).get(start, 0)
 
 
@@ -289,7 +292,7 @@ def ensure_within_derecho(
     es_adelanto: bool = False,
     fecha_ingreso: date | str | None = None,
 ) -> None:
-    """Falla si algún récord (perido->periodo) supera el tope; no el total del año calendario."""
+    """Falla si algún récord (de aniversario a aniversario) supera el tope; no el total del año calendario."""
     ingreso = parse_iso_date(fecha_ingreso)
     if any(n > derecho for n in days_by_record(dates_for_dni_year(daily_set, dni, year), ingreso).values()):
         raise ValueError(mensaje_sin_saldo(nombre, pedidas, programados_base, derecho, es_adelanto=es_adelanto))
@@ -410,7 +413,7 @@ def reject_if_despues_de_vencimiento(
     nombre: str = "",
     today: date | None = None,
 ) -> None:
-    """Pepe récord mar-2026/mar-2027: goce hasta mar-2028; abril-2028 no se programa."""
+    """Ej.: récord mar-2026/mar-2027 se goza hasta mar-2028; abril-2028 ya no se programa."""
     limite = fecha_vencimiento_de(fecha_ingreso, view_year, today)
     if not limite or not fechas:
         return
@@ -562,8 +565,12 @@ def apply_consecutive_span(
     today: date | None = None,
     fecha_ingreso: date | None = None,
     nombre: str = "",
+    validar_art8: bool = True,
 ) -> tuple[list[date], list[tuple[int, int, int]]]:
-    """Marca N días seguidos y actualiza el número de cada semana tocada."""
+    """Marca N días seguidos y actualiza el número de cada semana tocada.
+
+    `validar_art8`: el adelanto no usa el bloque de 15 / 7+8 del goce anual.
+    """
     today = today or today_lima()
     reject_if_start_in_past(start_date, today)
     if clear_week is not None:
@@ -590,14 +597,17 @@ def apply_consecutive_span(
         else set()
     )
     reject_if_span_overlaps(daily_set, dni, in_year, ignore=ignore)
+    tentative = daily_set | {key_daily(dni, d) for d in in_year}
+    if validar_art8:
+        reject_if_art8_invalido(tentative, dni, year)
     for d in in_year:
         daily_set.add(key_daily(dni, d))
     deltas = refresh_week_targets(daily_set, targets, dni, year, weeks)
-    reject_if_art8_invalido(daily_set, dni, year)
     return fechas, deltas
 
 
 def dates_for_dni_year(daily_set: set[str], dni: str, year: int) -> list[date]:
+    """Fechas de una persona. Recorre todo daily_set: para muchas personas usa index_dates_by_dni."""
     prefix = f"{dni}|"
     out: list[date] = []
     for item in daily_set:
@@ -609,11 +619,54 @@ def dates_for_dni_year(daily_set: set[str], dni: str, year: int) -> list[date]:
     return sorted(out)
 
 
+def index_dates_by_dni(daily_set: set[str], year: int) -> dict[str, list[date]]:
+    """Fechas ordenadas por DNI en una sola pasada (evita recorrer daily_set una vez por persona)."""
+    out: dict[str, list[date]] = defaultdict(list)
+    for item in daily_set:
+        dni, d = parse_daily_key(item)
+        if d.isocalendar()[0] == year:
+            out[dni].append(d)
+    for fechas in out.values():
+        fechas.sort()
+    return out
+
+
+def cierre_edicion(inicio: date) -> date:
+    """Viernes de la semana anterior al inicio: último día en que la jefatura programa o mueve ese tramo."""
+    lunes = inicio - timedelta(days=inicio.weekday())
+    return lunes - timedelta(days=3)
+
+
+def tramo_cerrado(inicio: date, today: date | None = None) -> bool:
+    today = today or today_lima()
+    return today > cierre_edicion(inicio)
+
+
+def primer_inicio_jefatura(today: date | None = None) -> date:
+    """Primer día que la jefatura aún puede programar (lunes de la primera semana sin cerrar)."""
+    today = today or today_lima()
+    lunes = today - timedelta(days=today.weekday())
+    return lunes + timedelta(days=7 if today.weekday() <= 4 else 14)
+
+
+def reject_if_tramo_cerrado(inicio: date, today: date | None = None) -> None:
+    today = today or today_lima()
+    if not tramo_cerrado(inicio, today):
+        return
+    raise ValueError(
+        f"La semana del {inicio.strftime('%d/%m/%Y')} ya cerró: se podía programar o cambiar hasta el "
+        f"viernes {cierre_edicion(inicio).strftime('%d/%m/%Y')}. Si es un caso extraordinario, "
+        "pídelo a Personas y Cultura."
+    )
+
+
 def period_estado(ini: date, fin: date, today: date) -> str:
     if fin < today:
         return "gozado"
     if ini <= today:
         return "en_curso"
+    if tramo_cerrado(ini, today):
+        return "cerrado"
     return "programado"
 
 
@@ -643,8 +696,12 @@ def vacation_periods(
 
 
 def art8_fraccion_ok(sizes: list[int]) -> bool:
-    """D.S. 002-2019-TR Art. 8: un solo tramo, o ≥15 corridos, o dos tramos ≥7 y ≥8."""
-    if len(sizes) <= 1:
+    """D.S. 002-2019-TR Art. 8: los primeros 15 van en un bloque ≥15 o en 7+8.
+
+    No obliga a cargar 15 de una: el primer tramo puede ser 7 u 8 (el segundo
+    completa el par). 1 a 6 días solo después de ese primer bloque.
+    """
+    if not sizes:
         return True
     if any(s >= 15 for s in sizes):
         return True
@@ -652,7 +709,7 @@ def art8_fraccion_ok(sizes: list[int]) -> bool:
         for j, b in enumerate(sizes):
             if i != j and a >= 7 and b >= 8:
                 return True
-    return False
+    return len(sizes) == 1 and sizes[0] >= 7
 
 
 def reject_if_art8_invalido(daily_set: set[str], dni: str, year: int) -> None:
@@ -661,8 +718,8 @@ def reject_if_art8_invalido(daily_set: set[str], dni: str, year: int) -> None:
         return
     raise ValueError(
         "El fraccionamiento no cumple el Art. 8 (D.S. 002-2019-TR): "
-        "hace falta un bloque de al menos 15 días corridos, "
-        "o dos bloques de al menos 7 y 8 días. El resto puede ser desde 1 día."
+        "los primeros 15 días se programan en un bloque de al menos 15 corridos, "
+        "o en dos períodos de al menos 7 y 8."
     )
 
 
@@ -729,17 +786,27 @@ def move_vacation_period(
     today: date | None = None,
     fecha_ingreso: date | None = None,
     nombre: str = "",
+    permitir_cerrado: bool = False,
+    validar_art8: bool = True,
 ) -> tuple[list[date], list[tuple[int, int, int]], dict]:
-    """Reprograma un tramo futuro (mismos días salvo que se pida otro número). No descuenta dos veces."""
+    """Reprograma un tramo futuro (mismos días salvo que se pida otro número). No descuenta dos veces.
+
+    `permitir_cerrado`: Personas y Cultura puede mover un tramo cuya semana ya cerró (caso extraordinario).
+    `validar_art8`: False para el adelanto (no sigue el bloque de 15 / 7+8).
+    """
     today = today or today_lima()
     periods = vacation_periods(daily_set, dni, year, today)
     found = next((p for p in periods if p["inicio"] == old_start), None)
     if not found:
         raise ValueError("No se encontró ese período de vacaciones.")
-    if not found["editable"]:
+    if found["estado"] in {"gozado", "en_curso"}:
         raise ValueError(
             "Ese período ya comenzó o ya fue gozado; no se puede cambiar la fecha."
         )
+    if found["estado"] == "cerrado" and not permitir_cerrado:
+        reject_if_tramo_cerrado(found["inicio"], today)
+    if not permitir_cerrado:
+        reject_if_tramo_cerrado(new_start, today)
     n = int(days) if days is not None else int(found["dias"])
     if n < 1:
         raise ValueError("Indica cuántos días tiene el período.")
@@ -760,6 +827,7 @@ def move_vacation_period(
         today=today,
         fecha_ingreso=fecha_ingreso,
         nombre=nombre,
+        validar_art8=validar_art8,
     )
     extra_weeks = [wk for wk in old_weeks if wk not in {d[0] for d in deltas_new}]
     deltas_old = refresh_week_targets(daily_set, targets, dni, year, extra_weeks)

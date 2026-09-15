@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { NavLink, Outlet } from "react-router-dom";
 import {
   Bell,
@@ -131,7 +131,7 @@ export function Shell() {
     <div className="flex h-full overflow-hidden bg-background">
       <aside className="hidden h-full w-[260px] shrink-0 flex-col border-r border-border bg-sidebar md:flex">
         <div className="shrink-0 border-b border-border px-5 py-5">
-          <p className="text-[10px] font-semibold tracking-[0.12em] text-muted-foreground">GTH · Prize / Aquanqa</p>
+          <p className="text-[10px] font-semibold tracking-[0.12em] text-muted-foreground">Personas y Cultura · Prize / Aquanqa</p>
           <h1 className="text-lg font-semibold leading-tight text-foreground">Vacaciones</h1>
         </div>
 
@@ -186,7 +186,7 @@ export function Shell() {
           <div className="min-w-0">
             <p className="truncate text-xs font-semibold">{display}</p>
             <p className="text-[11px] text-muted-foreground">
-              {user?.is_admin ? "Admin · GTH" : user?.is_jefe ? "Jefe" : user?.is_gerente ? "Gerente" : user?.rol}
+              {user?.is_admin ? "Personas y Cultura" : user?.is_jefe ? "Jefe" : user?.is_gerente ? "Gerente" : user?.rol}
             </p>
           </div>
         </div>
@@ -195,16 +195,16 @@ export function Shell() {
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <header className="flex h-14 shrink-0 items-center justify-between gap-3 border-b border-border bg-card px-4 md:px-6">
           <div className="min-w-0 md:hidden">
-            <p className="text-[10px] font-semibold tracking-[0.08em] text-muted-foreground">GTH · Vacaciones</p>
+            <p className="text-[10px] font-semibold tracking-[0.08em] text-muted-foreground">Personas y Cultura · Vacaciones</p>
             <p className="truncate text-[13px] font-semibold text-foreground">{display}</p>
           </div>
           <p className="hidden min-w-0 truncate text-[13px] text-muted-foreground md:block">
-            {display} · {user?.correo} · {user?.rol}
+            {display} · {user?.correo}
             {user?.is_admin
-              ? " · todas las divisiones"
+              ? " · Personas y Cultura · todas las divisiones"
               : user?.is_jefe
-                ? ` · ${user?.area || "sin área"}`
-                : ` · ${user?.division || user?.gerencia}`}
+                ? ` · Jefatura · ${user?.area || "sin área"}`
+                : ` · Gerencia · ${user?.division || user?.gerencia || "sin división"}`}
           </p>
           <div className="flex shrink-0 items-center gap-1.5">
             <NotificationsBell />
@@ -232,7 +232,9 @@ export function Shell() {
         </div>
 
         <main className="flex-1 space-y-5 overflow-auto p-4 pb-[calc(5.5rem+env(safe-area-inset-bottom))] md:space-y-6 md:p-8 md:pb-8">
-          <Outlet />
+          <Suspense fallback={<p className="text-sm text-muted-foreground">Cargando…</p>}>
+            <Outlet />
+          </Suspense>
         </main>
 
         <nav className="pointer-events-none fixed inset-x-0 bottom-0 z-40 px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] md:hidden">

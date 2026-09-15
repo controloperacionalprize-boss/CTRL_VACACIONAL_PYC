@@ -9,14 +9,15 @@ from .calendar import (
     TOTAL_SEMANAS,
     allowed_type,
     art8_fraccion_ok,
-    dates_for_dni_year,
     derecho_vigente,
     group_consecutive_dates,
+    index_dates_by_dni,
     is_weekend,
     key_daily,
     now_lima,
     parse_daily_key,
     parse_iso_date,
+    record_cumplido,
     period_saldo_issue,
     selected_count,
     today_lima,
@@ -135,7 +136,7 @@ GROUP_META = {
     },
     "art8": {
         "title": "Fraccionamiento fuera del Art. 8",
-        "hint": "Hace falta un bloque de 15 días corridos, o dos de al menos 7 y 8. El resto puede ser desde 1 día.",
+        "hint": "Los primeros 15 se programan en un bloque de 15 corridos, o en dos períodos de 7 y 8 (primero uno, luego el otro).",
     },
     "periodos": {
         "title": "Dos períodos en el mismo año",
@@ -151,11 +152,12 @@ GROUP_META = {
 def validate_plan(employees, targets, daily_set, year, today: date | None = None):
     today = today or today_lima()
     issues: list[dict] = []
+    por_dni = index_dates_by_dni(daily_set, year)
 
     for w in employees:
         dni = str(w["dni"])
         ingreso = parse_iso_date(w.get("fecha_ingreso"))
-        fechas = dates_for_dni_year(daily_set, dni, year)
+        fechas = por_dni.get(dni, [])
         tramos = vacation_periods(daily_set, dni, year, today, dates=fechas)
         aviso = period_saldo_issue(
             w["nombre"],
@@ -168,7 +170,8 @@ def validate_plan(employees, targets, daily_set, year, today: date | None = None
         if aviso:
             issues.append({"code": aviso[0], "sample": aviso[1]})
         sizes = [p["dias"] for p in tramos]
-        if sizes and not art8_fraccion_ok(sizes):
+        # El adelanto (aún no cumple el año) no sigue el bloque de 15 / 7+8.
+        if sizes and record_cumplido(ingreso, today) and not art8_fraccion_ok(sizes):
             issues.append({
                 "code": "art8",
                 "sample": (

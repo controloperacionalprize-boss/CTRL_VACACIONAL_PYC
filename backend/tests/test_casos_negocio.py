@@ -1,4 +1,4 @@
-"""Mapa de casos GTH: goce 30, Art. 8, adelanto, modificar período, fechas, año."""
+"""Mapa de casos de Personas y Cultura: goce 30, Art. 8, adelanto, modificar período, fechas, año."""
 from datetime import date, timedelta
 
 import pytest
@@ -34,6 +34,10 @@ def test_art8_matriz_permitida_y_rechazada():
     assert art8_fraccion_ok([7, 8])
     assert art8_fraccion_ok([8, 7, 2])
     assert art8_fraccion_ok([10, 7])
+    assert art8_fraccion_ok([7])
+    assert not art8_fraccion_ok([5])
+    assert not art8_fraccion_ok([6])
+    assert not art8_fraccion_ok([3])
     assert not art8_fraccion_ok([7, 7])
     assert not art8_fraccion_ok([6, 8])
     assert not art8_fraccion_ok([5, 5, 5])
@@ -69,11 +73,14 @@ def test_fraccion_15_mas_resto_y_7_8():
     assert sizes == [7, 8, 15]
 
 
-def test_primer_tramo_corto_ok_segundo_corto_no():
+def test_primer_tramo_corto_no_se_guarda():
     daily, targets = set(), {}
-    _span(daily, targets, date(2026, 9, 1), 5)
     with pytest.raises(ValueError, match="Art. 8"):
-        _span(daily, targets, date(2026, 10, 1), 5)
+        _span(daily, targets, date(2026, 9, 1), 5)
+    with pytest.raises(ValueError, match="Art. 8"):
+        _span(daily, targets, date(2026, 9, 1), 3)
+    with pytest.raises(ValueError, match="Art. 8"):
+        _span(daily, targets, date(2026, 9, 1), 6)
 
 
 # --- Adelanto (2.5 días por mes completo, tope 30 al cumplir el año) ---
@@ -147,7 +154,8 @@ def test_validate_plan_marca_art8_y_saldo():
         "dni": "1",
         "nombre": "Ana",
         "tipo_personal": "ADMINISTRATIVO",
-        "fecha_ingreso": "2026-01-01",
+        # Ya cumplió el año: el Art. 8 no aplica al adelanto (ver test_auditoria).
+        "fecha_ingreso": "2020-01-01",
         "jefatura": "X",
         "gerencia": "G",
         "area": "A",

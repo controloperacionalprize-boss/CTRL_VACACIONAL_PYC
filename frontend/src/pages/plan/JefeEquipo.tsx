@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { Send } from "lucide-react";
 import { EmpAvatar } from "../../components/EmpAvatar";
 import { Button, cn } from "../../components/ui";
-import { diasDisponibles, goceCompleto, topeDe } from "../../lib/vacaciones";
+import { MAX_VAC_DAYS, diasDisponibles, goceCompleto, topeDe } from "../../lib/vacaciones";
 import type { Worker } from "./types";
 
 type FilaKind = "sin" | "listo" | "observado" | "enviado" | "cerrado";
@@ -102,7 +102,7 @@ export function JefeEquipo({
             <div className="min-w-0">
               <p className="text-[13px] font-semibold">Programa</p>
               <p className="mt-0.5 text-[12px] leading-snug text-muted-foreground">
-                Puedes programar varios períodos (ej. 10 días, luego otro apartado). La suma debe llegar al derecho antes de enviar. Art. 8: 15 corridos, o 7 y 8.
+                Programa los 30 días de cada persona, en uno o varios períodos (Art. 8: 15 corridos, o primero 7 u 8 y luego el otro; el resto libre). Cada semana se programa o cambia hasta el viernes anterior.
               </p>
             </div>
           </div>
@@ -245,7 +245,7 @@ export function JefeEquipo({
       <div className="flex flex-col gap-3 border-t border-border px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
         <p className={cn("text-[13px] leading-snug", faltaProgramar > 0 ? "font-medium text-warning" : "text-muted-foreground")}>
           {faltaProgramar > 0
-            ? `No puedes enviar al gerente: faltan ${faltaProgramar} persona${faltaProgramar === 1 ? "" : "s"} sin vacaciones. Programa a todo el equipo primero.`
+            ? `No puedes enviar al gerente: faltan ${faltaProgramar} persona${faltaProgramar === 1 ? "" : "s"} por completar sus ${MAX_VAC_DAYS} días. Programa a todo el equipo primero.`
             : puedeEnviar
               ? `Todo el equipo está programado. Puedes enviar ${porEnviar} plan${porEnviar === 1 ? "" : "es"} al gerente.`
               : "No hay planes pendientes de envío."}

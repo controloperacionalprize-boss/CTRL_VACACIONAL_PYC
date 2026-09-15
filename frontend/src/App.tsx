@@ -1,20 +1,26 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { api, qs } from "./api";
 import { Login } from "./pages/Login";
 import { Shell } from "./pages/Shell";
 import { PlanPage } from "./pages/Plan";
-import { DashboardPage } from "./pages/Dashboard";
-import { CalendarPage } from "./pages/Calendar";
-import { ExportPage } from "./pages/Export";
-import { ValidacionesPage } from "./pages/Validaciones";
-import { AdminPage } from "./pages/Admin";
-import { AlertasPage } from "./pages/Alertas";
-import { DocumentosPage } from "./pages/Documentos";
-import { AppCtx, type Filters, type User } from "./state";
+import { AppCtx, type AppState, type Filters, type User } from "./state";
 import { inboxItems, syncInbox, type AlertsPayload, type InboxEntry } from "./lib/alerts";
 
+// Cada pantalla se descarga al abrirla: Dashboard trae recharts (la mayor parte del bundle),
+// y no hace falta parsearlo para planificar.
+const DashboardPage = lazy(() => import("./pages/Dashboard").then((m) => ({ default: m.DashboardPage })));
+const CalendarPage = lazy(() => import("./pages/Calendar").then((m) => ({ default: m.CalendarPage })));
+const ExportPage = lazy(() => import("./pages/Export").then((m) => ({ default: m.ExportPage })));
+const ValidacionesPage = lazy(() => import("./pages/Validaciones").then((m) => ({ default: m.ValidacionesPage })));
+const AdminPage = lazy(() => import("./pages/Admin").then((m) => ({ default: m.AdminPage })));
+const AlertasPage = lazy(() => import("./pages/Alertas").then((m) => ({ default: m.AlertasPage })));
+const DocumentosPage = lazy(() => import("./pages/Documentos").then((m) => ({ default: m.DocumentosPage })));
+
 const yearNow = new Date().getFullYear();
+// Volver a la pestaña recalcula alertas en el servidor; no más de una vez por minuto.
+const ALERTS_FOCUS_MIN_MS = 60_000;
+const ALERTS_POLL_MS = 5 * 60_000;
 
 export function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -29,6 +35,7 @@ export function App() {
   const [alerts, setAlerts] = useState<AlertsPayload | null>(null);
   const [alertsError, setAlertsError] = useState("");
   const [inbox, setInbox] = useState<Record<string, InboxEntry>>({});
+  const alertsAt = useRef(0);
 
   const alertQuery = useMemo(
     () => ({
@@ -40,19 +47,20 @@ export function App() {
     [filters]
   );
 
-  function logout() {
+  const logout = useCallback(() => {
     localStorage.removeItem("vac_token");
     setUser(null);
     setAlerts(null);
     setAlertsError("");
     setInbox({});
-  }
+  }, []);
 
   const reloadAlerts = useCallback(() => {
     if (!user) {
       setAlerts(null);
       return;
     }
+    alertsAt.current = Date.now();
     api<AlertsPayload>(`/api/alerts${qs(alertQuery)}`)
       .then((data) => {
         setAlerts(data);
@@ -110,34 +118,43 @@ export function App() {
 
   useEffect(() => {
     if (!user) return;
-    const onFocus = () => reloadAlerts();
+    const onFocus = () => {
+      if (Date.now() - alertsAt.current >= ALERTS_FOCUS_MIN_MS) reloadAlerts();
+    };
     window.addEventListener("focus", onFocus);
-    const timer = window.setInterval(reloadAlerts, 5 * 60 * 1000);
+    // Sin la pestaña visible no se consulta: evita trabajo del servidor con la app olvidada abierta.
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible") reloadAlerts();
+    }, ALERTS_POLL_MS);
     return () => {
       window.removeEventListener("focus", onFocus);
       window.clearInterval(timer);
     };
   }, [user, reloadAlerts]);
 
+  // Un objeto nuevo en cada render hacía re-renderizar a todas las pantallas que usan useApp().
+  const ctx = useMemo<AppState>(
+    () => ({
+      user,
+      setUser,
+      logout,
+      filters,
+      setFilters,
+      options,
+      setOptions,
+      alerts,
+      alertsError,
+      inbox,
+      setInbox,
+      reloadAlerts,
+    }),
+    [user, logout, filters, options, alerts, alertsError, inbox, reloadAlerts]
+  );
+
   if (!ready) return <div className="p-10 text-sm text-muted-foreground">Abriendo la aplicación…</div>;
 
   return (
-    <AppCtx.Provider
-      value={{
-        user,
-        setUser,
-        logout,
-        filters,
-        setFilters,
-        options,
-        setOptions,
-        alerts,
-        alertsError,
-        inbox,
-        setInbox,
-        reloadAlerts,
-      }}
-    >
+    <AppCtx.Provider value={ctx}>
       {!user ? (
         <Login
           onLogin={(token, u) => {

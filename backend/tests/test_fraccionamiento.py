@@ -20,11 +20,17 @@ def _span(daily, targets, start, days):
     )
 
 
-def test_art8_un_tramo_siempre_ok():
+def test_art8_primer_tramo_no_puede_ser_resto():
     assert art8_fraccion_ok([])
     assert art8_fraccion_ok([30])
+    assert art8_fraccion_ok([15])
     assert art8_fraccion_ok([7])
+    assert art8_fraccion_ok([8])
     assert art8_fraccion_ok([10])
+    assert not art8_fraccion_ok([1])
+    assert not art8_fraccion_ok([3])
+    assert not art8_fraccion_ok([5])
+    assert not art8_fraccion_ok([6])
 
 
 def test_art8_quince_mas_resto():
@@ -34,6 +40,7 @@ def test_art8_quince_mas_resto():
 
 def test_art8_siete_y_ocho():
     assert art8_fraccion_ok([7, 8])
+    assert art8_fraccion_ok([8, 7])
     assert art8_fraccion_ok([8, 7, 1, 14])
     assert art8_fraccion_ok([10, 7])  # 10 cuenta como ≥8
 
@@ -41,6 +48,7 @@ def test_art8_siete_y_ocho():
 def test_art8_rechaza_sin_bloque_minimo():
     assert not art8_fraccion_ok([5, 5])
     assert not art8_fraccion_ok([7, 7])
+    assert not art8_fraccion_ok([7, 3])
     assert not art8_fraccion_ok([6, 8])
     assert not art8_fraccion_ok([1, 1, 1])
 
@@ -55,6 +63,16 @@ def test_goce_completo_30():
     assert periods[0]["dias"] == 30
 
 
+def test_fraccion_empieza_con_8_luego_7_luego_libres():
+    """El primer registro puede ser 8 (o 7); el segundo completa el par. No hace falta un 15 de una."""
+    daily, targets = set(), {}
+    _span(daily, targets, date(2026, 9, 1), 8)
+    _span(daily, targets, date(2026, 10, 15), 7)
+    _span(daily, targets, date(2026, 12, 1), 3)
+    sizes = [p["dias"] for p in vacation_periods(daily, "1", _YEAR, today=_HOY)]
+    assert sizes == [8, 7, 3]
+
+
 def test_fraccion_7_8_15():
     daily, targets = set(), {}
     _span(daily, targets, date(2026, 9, 1), 7)
@@ -64,11 +82,10 @@ def test_fraccion_7_8_15():
     assert sorted(sizes) == [7, 8, 15]
 
 
-def test_rechaza_fraccion_5_y_5():
+def test_rechaza_primer_tramo_de_5():
     daily, targets = set(), {}
-    _span(daily, targets, date(2026, 9, 1), 5)
     with pytest.raises(ValueError, match="Art. 8"):
-        _span(daily, targets, date(2026, 10, 15), 5)
+        _span(daily, targets, date(2026, 9, 1), 5)
 
 
 def test_rechaza_solape():

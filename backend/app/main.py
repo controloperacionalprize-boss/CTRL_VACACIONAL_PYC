@@ -7,7 +7,6 @@ from fastapi.responses import JSONResponse
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
-from .attendance_excel import warmup_excel_cache
 from .config import get_settings
 from .db import check_connection, close_pool, ensure_scope_columns
 from .attendance_db import close_attendance_pool
@@ -21,12 +20,13 @@ from .routers.documents import router as documents_router
 from .routers.auth import router as auth_router
 from .routers.catalog import router as catalog_router
 from .routers.dashboard import router as dashboard_router
+from .routers.notificaciones import router as notificaciones_router
 from .routers.plan import router as plan_router
 from .routers.reports import router as reports_router
 from .routers.workflow import router as workflow_router
 
 # Cambia con cada fix de deploy para verificar en /api/version qué código está vivo.
-DEPLOY_MARK = "docs-emision"
+DEPLOY_MARK = "docs-por-tramo-cierre-semanal"
 
 
 logger = logging.getLogger(__name__)
@@ -37,8 +37,10 @@ async def lifespan(_app: FastAPI):
     try:
         ensure_scope_columns()
     except Exception:
-        logger.exception("No se pudieron crear columnas/tablas de alcance (plan_flujo / users.area).")
-    warmup_excel_cache()
+        logger.exception("No se pudieron crear columnas/tablas (plan_flujo, plan_documento, app_config…).")
+    # El Excel de asistencia (SharePoint) ya no se descarga al arrancar: leerlo con pandas
+    # ocupaba el CPU del plan free justo cuando llegan las primeras visitas. Se baja en
+    # segundo plano la primera vez que alguien abre el récord vacacional.
     yield
     close_pool()
     close_attendance_pool()
@@ -73,6 +75,7 @@ app.include_router(plan_router)
 app.include_router(workflow_router)
 app.include_router(alerts_router)
 app.include_router(documents_router)
+app.include_router(notificaciones_router)
 app.include_router(dashboard_router)
 # app.include_router(asistencia_router)  # deshabilitado: módulo en construcción
 app.include_router(reports_router)

@@ -1,4 +1,4 @@
-"""Flujo de validación: jefe envía aptos → gerente valida → admin recepciona."""
+"""Flujo de validación: jefe envía aptos → gerente valida → Personas y Cultura recepciona."""
 from __future__ import annotations
 
 from datetime import date, datetime
@@ -131,15 +131,24 @@ def programmed_days_for(dni: str, daily_set, targets) -> int:
     return sum(int(dias) for (d, _w), dias in (targets or {}).items() if d == dni)
 
 
-def goce_y_derecho(emp: dict, daily_set, targets, year: int, today: date | None = None) -> tuple[int, int, bool]:
+def goce_y_derecho(
+    emp: dict,
+    daily_set,
+    targets,
+    year: int,
+    today: date | None = None,
+    *,
+    dates: list[date] | None = None,
+) -> tuple[int, int, bool]:
+    """(días en el récord vigente, derecho, es_adelanto). Pasa `dates` si ya las tienes indexadas."""
     today = today or today_lima()
     ingreso = parse_iso_date(emp.get("fecha_ingreso"))
     adelanto = not record_cumplido(ingreso, today)
     derecho = derecho_vigente(ingreso, today)
     dni = str(emp["dni"])
-    dias = count_days_in_record(daily_set, dni, year, today, ingreso)
+    dias = count_days_in_record(daily_set, dni, year, today, ingreso, dates=dates)
     if not dias:
-        dias = programmed_days_for(dni, daily_set, targets)
+        dias = len(dates) if dates else programmed_days_for(dni, daily_set, targets)
     return dias, derecho, adelanto
 
 
@@ -326,9 +335,15 @@ def apply_uploaded_periods(
     today: date | None = None,
     fecha_ingreso: date | None = None,
     nombre: str = "",
+    primer_inicio: date | None = None,
 ) -> None:
-    """Reemplaza días futuros del año con los tramos del Excel; conserva el pasado."""
+    """Reemplaza los días editables del año con los tramos del Excel.
+
+    Conserva lo que ya no se puede tocar: el pasado y, si se indica `primer_inicio`
+    (jefatura), las semanas ya cerradas. Un tramo nuevo en una semana cerrada se rechaza.
+    """
     today = today or today_lima()
+    corte = max(today, primer_inicio) if primer_inicio else today
     prefix = f"{dni}|"
     keep = set()
     for item in list(daily_set):
@@ -337,7 +352,7 @@ def apply_uploaded_periods(
         _, d = parse_daily_key(item)
         if d.isocalendar()[0] != year and d.year != year:
             continue
-        if date_is_past(d, today):
+        if d < corte:
             keep.add(item)
         daily_set.discard(item)
     daily_set.update(keep)
@@ -347,7 +362,18 @@ def apply_uploaded_periods(
         fin = per["fecha_fin"]
         if not isinstance(ini, date) or not isinstance(fin, date) or fin < ini:
             continue
-        nuevas.extend(d for d in date_range(ini, fin) if not date_is_past(d, today))
+        for d in date_range(ini, fin):
+            if date_is_past(d, today):
+                continue
+            if d < corte:
+                if key_daily(dni, d) in keep:
+                    continue
+                raise ValueError(
+                    f"{nombre or dni}: el {d.strftime('%d/%m/%Y')} cae en una semana ya cerrada "
+                    f"(desde el {corte.strftime('%d/%m/%Y')} se puede programar). "
+                    "Si es un caso extraordinario, pídelo a Personas y Cultura."
+                )
+            nuevas.append(d)
     reject_if_despues_de_vencimiento(
         nuevas, fecha_ingreso, year, nombre=nombre, today=today
     )

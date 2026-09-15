@@ -39,14 +39,14 @@ def test_admin_siete_dias_desde_viernes_cruza_semana():
     assert dict(targets) == {("1", 34): 3, ("1", 35): 4}
 
 
-def test_operativo_jueves_cinco_dias_cruza_semana():
+def test_operativo_jueves_siete_dias_cruza_semana():
     start = date.fromisocalendar(2026, 34, 4)
     daily, targets = set(), {}
     _, deltas = apply_consecutive_span(
-        daily, targets, "1", "OPERATIVO", start, 5, 2026, today=_HOY
+        daily, targets, "1", "OPERATIVO", start, 7, 2026, today=_HOY
     )
-    assert dict(targets) == {("1", 34): 4, ("1", 35): 1}
-    assert [(w, n) for w, _o, n in deltas] == [(34, 4), (35, 1)]
+    assert dict(targets) == {("1", 34): 4, ("1", 35): 3}
+    assert [(w, n) for w, _o, n in deltas] == [(34, 4), (35, 3)]
 
 
 def test_desconocido_usa_calendario():
@@ -133,7 +133,7 @@ def test_mover_periodo_no_puede_pasar_del_vencimiento():
         "1",
         "ADMINISTRATIVO",
         date(2026, 9, 10),
-        5,
+        7,
         2026,
         today=date(2026, 9, 7),
         fecha_ingreso=ingreso,
@@ -151,4 +151,67 @@ def test_mover_periodo_no_puede_pasar_del_vencimiento():
             today=date(2026, 9, 7),
             fecha_ingreso=ingreso,
             nombre="Pepe",
+            # El tramo del 10/09 ya está en semana cerrada: solo Personas y Cultura lo mueve.
+            permitir_cerrado=True,
         )
+
+
+def test_cierre_de_edicion_es_el_viernes_de_la_semana_anterior():
+    from app.domain.calendar import cierre_edicion, primer_inicio_jefatura, tramo_cerrado
+
+    lunes_40 = date(2026, 9, 28)
+    miercoles_40 = date(2026, 9, 30)
+    assert cierre_edicion(lunes_40) == date(2026, 9, 25)
+    assert cierre_edicion(miercoles_40) == date(2026, 9, 25)
+    assert not tramo_cerrado(miercoles_40, today=date(2026, 9, 25))
+    assert tramo_cerrado(miercoles_40, today=date(2026, 9, 26))
+    # Viernes: todavía programa la semana siguiente. Sábado: ya la subsiguiente.
+    assert primer_inicio_jefatura(date(2026, 9, 25)) == lunes_40
+    assert primer_inicio_jefatura(date(2026, 9, 26)) == date(2026, 10, 5)
+    assert primer_inicio_jefatura(date(2026, 9, 21)) == lunes_40
+
+
+def test_jefatura_no_mueve_tramo_de_semana_cerrada_pero_administracion_si():
+    from app.domain.calendar import move_vacation_period, vacation_periods
+
+    daily, targets = set(), {}
+    apply_consecutive_span(
+        daily, targets, "1", "ADMINISTRATIVO", date(2026, 9, 30), 7, 2026, today=date(2026, 9, 20)
+    )
+    hoy = date(2026, 9, 28)  # semana 40 ya cerró el viernes 25
+    periodo = vacation_periods(daily, "1", 2026, hoy)[0]
+    assert periodo["estado"] == "cerrado"
+    with pytest.raises(ValueError, match="ya cerró"):
+        move_vacation_period(
+            daily, targets, "1", "ADMINISTRATIVO", 2026, date(2026, 9, 30), date(2026, 10, 21), today=hoy
+        )
+    nuevas, _deltas, _old = move_vacation_period(
+        daily,
+        targets,
+        "1",
+        "ADMINISTRATIVO",
+        2026,
+        date(2026, 9, 30),
+        date(2026, 10, 21),
+        today=hoy,
+        permitir_cerrado=True,
+    )
+    assert nuevas[0] == date(2026, 10, 21)
+
+
+def test_excel_de_jefatura_no_agrega_dias_en_semana_cerrada():
+    from app.domain.calendar import key_daily
+    from app.domain.workflow import apply_uploaded_periods
+
+    hoy = date(2026, 9, 28)
+    daily = {key_daily("1", date(2026, 10, 1))}
+    targets: dict = {}
+    periods = [{"fecha_inicio": date(2026, 10, 2), "fecha_fin": date(2026, 10, 3)}]
+    with pytest.raises(ValueError, match="semana ya cerrada"):
+        apply_uploaded_periods(
+            daily, targets, "1", 2026, periods, today=hoy, primer_inicio=date(2026, 10, 5), nombre="Ana"
+        )
+    ok = [{"fecha_inicio": date(2026, 10, 12), "fecha_fin": date(2026, 10, 13)}]
+    apply_uploaded_periods(daily, targets, "1", 2026, ok, today=hoy, primer_inicio=date(2026, 10, 5))
+    assert key_daily("1", date(2026, 10, 1)) in daily, "lo de la semana cerrada se conserva"
+    assert key_daily("1", date(2026, 10, 12)) in daily

@@ -160,6 +160,110 @@ def ensure_scope_columns() -> None:
             )
             """
         )
+        cur.execute(DOCUMENTO_DDL)
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_plan_documento_dni ON plan_documento (anio, dni)"
+        )
+        cur.execute(
+            """CREATE TABLE IF NOT EXISTS app_config (
+                   clave TEXT PRIMARY KEY,
+                   valor TEXT NOT NULL DEFAULT '',
+                   actualizado TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                   actualizado_por TEXT NOT NULL DEFAULT ''
+               )"""
+        )
+        cur.execute("ALTER TABLE employees ADD COLUMN IF NOT EXISTS correo TEXT NOT NULL DEFAULT ''")
+        cur.execute(
+            "ALTER TABLE employees ADD COLUMN IF NOT EXISTS correo_personal TEXT NOT NULL DEFAULT ''"
+        )
+        _migrar_emisiones_legacy(cur)
+
+
+DOCUMENTO_DDL = """
+CREATE TABLE IF NOT EXISTS plan_documento (
+    id SERIAL PRIMARY KEY,
+    anio INTEGER NOT NULL,
+    dni TEXT NOT NULL,
+    tipo TEXT NOT NULL,
+    tramo_inicio DATE,
+    tramo_fin DATE,
+    dias INTEGER NOT NULL DEFAULT 0,
+    periodos JSONB NOT NULL DEFAULT '[]'::jsonb,
+    periodos_anteriores JSONB NOT NULL DEFAULT '[]'::jsonb,
+    fecha_convenio DATE,
+    emitido_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    emitido_por TEXT NOT NULL DEFAULT '',
+    emitido_nombre TEXT NOT NULL DEFAULT '',
+    descargas INTEGER NOT NULL DEFAULT 1,
+    enviado_at TIMESTAMPTZ,
+    enviado_a TEXT NOT NULL DEFAULT '',
+    envio_error TEXT NOT NULL DEFAULT ''
+)
+"""
+
+
+def _migrar_emisiones_legacy(cur) -> None:
+    """Una sola vez: pasa las descargas del esquema anterior (una fila por persona) a plan_documento."""
+    from .domain.doc_emision import legacy_filas
+
+    cur.execute("SELECT EXISTS (SELECT 1 FROM plan_documento) AS hay")
+    if cur.fetchone()["hay"]:
+        return
+    cur.execute(
+        """SELECT anio, dni, escenario, plan_hash, descargas, descargado_at,
+                  descargado_por, descargado_nombre
+           FROM plan_documento_emision WHERE plan_hash <> ''"""
+    )
+    for row in cur.fetchall():
+        for fila in legacy_filas(row["escenario"], row["plan_hash"]):
+            insert_documento(
+                cur,
+                row["anio"],
+                row["dni"],
+                fila,
+                emitido_por=row["descargado_por"] or "",
+                emitido_nombre=row["descargado_nombre"] or "",
+                emitido_at=row["descargado_at"],
+                descargas=int(row["descargas"] or 1),
+            )
+
+
+def insert_documento(
+    cur,
+    anio: int,
+    dni: str,
+    fila: dict,
+    *,
+    emitido_por: str,
+    emitido_nombre: str,
+    emitido_at=None,
+    descargas: int = 1,
+) -> int:
+    import json
+
+    cur.execute(
+        """INSERT INTO plan_documento (
+               anio, dni, tipo, tramo_inicio, tramo_fin, dias, periodos, periodos_anteriores,
+               fecha_convenio, emitido_at, emitido_por, emitido_nombre, descargas
+           ) VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s, COALESCE(%s, NOW()), %s, %s, %s)
+           RETURNING id""",
+        (
+            int(anio),
+            str(dni),
+            fila["tipo"],
+            fila.get("tramo_inicio"),
+            fila.get("tramo_fin"),
+            int(fila.get("dias") or 0),
+            json.dumps(fila.get("periodos") or []),
+            json.dumps(fila.get("periodos_anteriores") or []),
+            fila.get("fecha_convenio"),
+            emitido_at,
+            emitido_por,
+            emitido_nombre,
+            int(descargas),
+        ),
+    )
+    return int(cur.fetchone()["id"])
 
 
 @contextmanager
