@@ -20,6 +20,23 @@ def fold_label(valor: str | None) -> str:
     return re.sub(r"\s+", " ", s).strip()
 
 
+_PARTICULAS = frozenset({"DE", "DEL", "LA", "LAS", "LOS", "Y", "E"})
+
+
+def misma_persona(a: str | None, b: str | None) -> bool:
+    """True si dos nombres son la misma persona escrita distinto.
+
+    Ej.: usuario "carlos coz" y maestro "COZ DE LA CRUZ CARLOS YORDANO": todas las palabras del
+    nombre corto (al menos dos) están en el largo.
+    """
+    ta = {t for t in fold_label(a).split() if t not in _PARTICULAS}
+    tb = {t for t in fold_label(b).split() if t not in _PARTICULAS}
+    if not ta or not tb:
+        return False
+    corto, largo = (ta, tb) if len(ta) <= len(tb) else (tb, ta)
+    return corto == largo or (len(corto) >= 2 and corto <= largo)
+
+
 def fold_list(*labels: str) -> list[str]:
     out: set[str] = set()
     for raw in labels:

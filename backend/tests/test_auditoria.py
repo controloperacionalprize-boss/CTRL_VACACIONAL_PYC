@@ -93,3 +93,40 @@ def test_recepcion_directa_solo_admin_y_desde_borrador():
     enviado = {**row, "estado": ENVIADO}
     with pytest.raises(ValueError, match="borrador"):
         apply_recepcion_directa(enviado, admin)
+
+
+def test_jefe_no_se_asigna_a_si_mismo_con_nombre_corto_de_usuario():
+    """Caso de producción: usuario JEFE "carlos coz" = maestro "COZ DE LA CRUZ CARLOS YORDANO"."""
+    from app.domain.alerts import attach_jefe_nombres
+    from app.org_scope import misma_persona
+
+    assert misma_persona("carlos coz", "COZ DE LA CRUZ CARLOS YORDANO")
+    assert not misma_persona("carlos", "COZ DE LA CRUZ CARLOS YORDANO"), "una sola palabra no basta"
+    assert not misma_persona("ana coz", "COZ DE LA CRUZ CARLOS YORDANO")
+    trabajador = {"dni": "45840854", "nombre": "COZ DE LA CRUZ CARLOS YORDANO", "area": "CONTROL OPERACIONAL", "jefatura": "CONTROL OPERACIONAL"}
+    usuarios_jefe = [{"nombre_persona": "carlos coz", "area": "CONTROL OPERACIONAL"}]
+    attach_jefe_nombres([trabajador], [], usuarios_jefe)
+    assert trabajador["jefe_nombre"] == ""
+
+
+def test_documentos_se_bajan_por_separado():
+    from app.doc_service import item_context, partes_item, render_item
+    from app.domain.doc_emision import documentos_pendientes
+    from app.domain.documents_pdf import _blocks_parte
+
+    hoy = date(2026, 9, 15)
+    daily = _dias("1", date(2026, 9, 21), 15)
+    for inicio in (date(2026, 10, 12), date(2026, 10, 26), date(2026, 11, 9), date(2026, 11, 23), date(2026, 12, 7)):
+        daily |= _dias("1", inicio, 3)
+    item = documentos_pendientes(periodos=vacation_periods(daily, "1", 2026, hoy), emitidos=[], today=hoy)[0]
+    assert [p["id"] for p in partes_item(item)] == ["solicitud", "convenio", "memorando"]
+    ctx = item_context(APTO, item, year=2026, fecha_doc=hoy, programmed=[])
+    titulos = {
+        parte: [b for k, b in _blocks_parte(2, ctx, parte) if k == "title"]
+        for parte in ("solicitud", "convenio", "memorando")
+    }
+    assert titulos["solicitud"] == ["SOLICITUD FRACCIONAMIENTO DE DESCANSO VACACIONAL"]
+    assert titulos["convenio"] == ["ACUERDO COMÚN DE FRACCIONAMIENTO DE DESCANSO VACACIONAL"]
+    assert titulos["memorando"] == ["MEMORANDO DE VACACIONES"]
+    pdf, nombre = render_item(APTO, item, year=2026, fecha_doc=hoy, programmed=[], parte="memorando")
+    assert pdf.startswith(b"%PDF") and "_memorando_" in nombre

@@ -18,7 +18,7 @@ from .domain.doc_emision import (
     item_desde_fila,
 )
 from .domain.documents import DocContext, build_context
-from .domain.documents_pdf import filename_pdf, render_pdf
+from .domain.documents_pdf import PARTE_LABEL, filename_pdf, partes_de, render_pdf
 from .domain.workflow import goce_y_derecho
 
 _DOC_COLS = (
@@ -154,10 +154,29 @@ def item_context(emp: dict, item: dict, *, year: int, fecha_doc: date, programme
     )
 
 
-def render_item(emp: dict, item: dict, *, year: int, fecha_doc: date, programmed: list[date]) -> tuple[bytes, str]:
+def render_item(
+    emp: dict,
+    item: dict,
+    *,
+    year: int,
+    fecha_doc: date,
+    programmed: list[date],
+    parte: str = "",
+) -> tuple[bytes, str]:
+    """PDF del documento; con `parte` ("solicitud", "convenio", "memorando"…) solo esa hoja."""
     ctx = item_context(emp, item, year=year, fecha_doc=fecha_doc, programmed=programmed)
     escenario = int(item["escenario"])
-    return render_pdf(escenario, ctx), filename_pdf(escenario, ctx)
+    return render_pdf(escenario, ctx, parte), filename_pdf(escenario, ctx, parte)
+
+
+def partes_item(item: dict) -> list[dict]:
+    """[{id, label}] de los documentos que se pueden bajar por separado."""
+    tipo = item.get("tipo")
+    con_memorando = bool(item.get("tramo")) or tipo in {"memorando", "adelanto"}
+    return [
+        {"id": p, "label": PARTE_LABEL[p]}
+        for p in partes_de(int(item["escenario"]), con_memorando)
+    ]
 
 
 def nombre_usuario(user: dict) -> str:

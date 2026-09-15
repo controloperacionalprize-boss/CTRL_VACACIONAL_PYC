@@ -17,23 +17,27 @@ from ..doc_service import (
     load_emitido,
     load_emitidos,
     lock_persona,
+    partes_item,
     pendientes_por_dni,
     registrar,
     reimpresion,
     render_item,
 )
-from ..domain.calendar import dates_for_dni_year, today_lima
+from ..domain.calendar import dates_for_dni_year, today_lima, vacation_periods
 from ..domain.doc_emision import (
     EMITIDO,
+    ESCENARIO_DE_TIPO,
     ESTADO_LABEL,
     MAX_ZIP,
     POR_EMITIR,
     PROXIMO,
     TITULO_DE_TIPO,
+    calendario_documentos,
     tramo_json,
     tramos_desde_json,
 )
 from ..domain.documents import TEMPLATES
+from ..domain.documents_pdf import PARTE_LABEL
 from ..domain.workflow import RECEPCIONADO, _ts, load_flujos
 from ..mailer import Adjunto, Correo, MailError, Mailer, cc_fijo, mail_configured
 from ..mensajes import correos_trabajador, load_mensajes, rellenar
@@ -74,6 +78,27 @@ def _item_json(emp: dict, item: dict) -> dict:
         "periodos": [tramo_json(p) for p in item.get("periodos") or []],
         "periodos_anteriores": [tramo_json(p) for p in item.get("periodos_anteriores") or []],
         "emitir_desde": _iso(item.get("emitir_desde")),
+        "partes": partes_item(item),
+    }
+
+
+def _proximo_tras_convenio(emp: dict, cal: dict) -> dict:
+    """Memorando que saldrá después del convenio: se muestra para planificar, aún no se emite."""
+    return {
+        **_persona(emp),
+        "key": "",
+        "tipo": cal["tipo"],
+        "escenario": 1,
+        "titulo": cal["titulo"],
+        "estado": PROXIMO,
+        "estado_label": ESTADO_LABEL[PROXIMO],
+        "tramo": cal["tramo"],
+        "incluye_memorando": False,
+        "periodos": [],
+        "periodos_anteriores": [],
+        "emitir_desde": cal["emitir_desde"],
+        "partes": [],
+        "tras_convenio": True,
     }
 
 
@@ -96,6 +121,11 @@ def _fila_json(emp: dict, fila: dict) -> dict:
         "enviado_at": _ts(fila.get("enviado_at")),
         "enviado_a": fila.get("enviado_a") or "",
         "envio_error": fila.get("envio_error") or "",
+        "partes": partes_item({
+            "tipo": fila["tipo"],
+            "escenario": ESCENARIO_DE_TIPO.get(fila["tipo"], 1),
+            "tramo": tramo,
+        }),
     }
 
 
@@ -127,8 +157,14 @@ def listar_documentos(
             pendientes = pendientes_por_dni(recep, daily_set, emitidos, year, today)
             for emp in recep:
                 dni = str(emp["dni"])
-                pend, _dates, motivo = pendientes[dni]
+                pend, dates, motivo = pendientes[dni]
                 items.extend(_item_json(emp, it) for it in pend)
+                if pend:
+                    # Antes de emitir el convenio, los memorandos siguientes también se listan
+                    # (en Próximos) para que se vea cómo se dividen los documentos del plan.
+                    periodos = vacation_periods(daily_set, dni, year, today, dates=dates)
+                    cal = calendario_documentos(pend, periodos, today)
+                    items.extend(_proximo_tras_convenio(emp, c) for c in cal[len(pend):])
                 emitidos_json.extend(_fila_json(emp, f) for f in emitidos.get(dni, []))
                 if motivo:
                     # Recepcionado pero luego editado (p. ej. caso extraordinario): no se emite hasta corregir.
@@ -157,11 +193,20 @@ class DocRef(BaseModel):
     dni: str = ""
     key: str = ""
     id: int | None = None
+    # Vacío = el PDF completo; si no, solo esa hoja ("solicitud", "convenio", "acuerdo", "memorando").
+    parte: str = ""
 
-    @field_validator("dni", "key")
+    @field_validator("dni", "key", "parte")
     @classmethod
     def trim(cls, v: str) -> str:
         return (v or "").strip()
+
+    @field_validator("parte")
+    @classmethod
+    def parte_ok(cls, v: str) -> str:
+        if v and v not in PARTE_LABEL:
+            raise ValueError("Documento no válido.")
+        return v
 
 
 class DocsIn(BaseModel):
@@ -208,9 +253,9 @@ def _resolver(cur, user: dict, year: int, ref: DocRef, today: date) -> tuple[dic
     return emp, item, dates, ids
 
 
-def _pdf(emp: dict, item: dict, year: int, dates: list[date]) -> tuple[bytes, str]:
+def _pdf(emp: dict, item: dict, year: int, dates: list[date], parte: str = "") -> tuple[bytes, str]:
     try:
-        return render_item(emp, item, year=year, fecha_doc=item["fecha_doc"], programmed=dates)
+        return render_item(emp, item, year=year, fecha_doc=item["fecha_doc"], programmed=dates, parte=parte)
     except ValueError as exc:
         raise HTTPException(400, f"{emp['nombre']}: {exc}") from exc
 
@@ -234,7 +279,7 @@ def descargar_uno(body: UnoIn, user: dict = Depends(require_admin)):
     with get_conn() as conn:
         cur = conn.cursor()
         emp, item, dates, _ids = _resolver(cur, user, body.year, body.doc, today)
-        pdf, name = _pdf(emp, item, body.year, dates)
+        pdf, name = _pdf(emp, item, body.year, dates, body.doc.parte)
     return _pdf_response(pdf, name)
 
 
@@ -248,13 +293,16 @@ def descargar_zip(body: DocsIn, user: dict = Depends(require_admin)):
             used: set[str] = set()
             for ref in body.docs:
                 emp, item, dates, _ids = _resolver(cur, user, body.year, ref, today)
-                pdf, name = _pdf(emp, item, body.year, dates)
                 folder = TEMPLATES[item["escenario"]][1]
-                arc = f"{folder}/{name}"
-                if arc in used:
-                    arc = f"{folder}/{len(used)}_{name}"
-                used.add(arc)
-                zf.writestr(arc, pdf)
+                # Cada documento en su propio PDF (solicitud, convenio, memorando…).
+                partes = [ref.parte] if ref.parte else [p["id"] for p in partes_item(item)] or [""]
+                for parte in partes:
+                    pdf, name = _pdf(emp, item, body.year, dates, parte)
+                    arc = f"{folder}/{name}"
+                    if arc in used:
+                        arc = f"{folder}/{len(used)}_{name}"
+                    used.add(arc)
+                    zf.writestr(arc, pdf)
     return Response(
         content=buf.getvalue(),
         media_type="application/zip",

@@ -1,5 +1,5 @@
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { api, downloadFile, fetchFile, qs } from "../api";
 import { addDaysIso, formatDayLabel, formatFechaIso, inclusiveDays, localTodayIso } from "../lib/dates";
 import { SEM_COLORS, weekLocked } from "../lib/semaforo";
@@ -814,14 +814,15 @@ export function PlanPage() {
     }
   }
 
-  async function recepcionarDirecto() {
-    if (!docReady) return;
+  async function recepcionarDirecto(dni = docReady?.dni) {
+    if (!dni) return;
     setRecepcionando(true);
     setDocError("");
+    setError("");
     try {
       const res = await api<{ recepcionados: number; errors: string[] }>("/api/flujo/recepcionar-directo", {
         method: "POST",
-        body: JSON.stringify({ year: docReady.year, dnis: [docReady.dni] }),
+        body: JSON.stringify({ year: params.year, dnis: [dni] }),
       });
       if (!res.recepcionados) {
         setDocError(res.errors?.join(" ") || "No se pudo recepcionar el plan.");
@@ -889,14 +890,16 @@ export function PlanPage() {
   if (!plan) return <p className="text-sm text-muted-foreground">Cargando plan…</p>;
 
   const isAdmin = Boolean(user?.is_admin);
-  const docWorker = docReady ? plan.workers.find((w) => w.dni === docReady.dni) : undefined;
   // Recepción directa: plan completo en borrador/observado (el backend vuelve a validar 30 días y Art. 8).
-  const recepcionable = Boolean(
-    docWorker &&
-      !esAdelanto(docWorker) &&
-      goceCompleto(docWorker.total_dias, topeDe(docWorker)) &&
-      ["BORRADOR", "OBSERVADO", "", undefined].includes(docWorker.flujo_estado)
-  );
+  const esRecepcionable = (w?: Worker | null) =>
+    Boolean(
+      w &&
+        !esAdelanto(w) &&
+        goceCompleto(w.total_dias, topeDe(w)) &&
+        ["BORRADOR", "OBSERVADO", "", undefined].includes(w.flujo_estado)
+    );
+  const recepcionable = esRecepcionable(docReady ? plan.workers.find((w) => w.dni === docReady.dni) : null);
+  const consecRecepcionable = esRecepcionable(consecWorker);
   const isJefe = Boolean(user?.is_jefe);
   const isGerente = Boolean(user?.is_gerente) && !isAdmin && !isJefe;
   const minProgramable = primerDia(plan);
@@ -1217,6 +1220,29 @@ export function PlanPage() {
                 : lockReasonFor(consecWorker!)
             : "Selecciona a la persona para habilitar Programar, Adelanto o Modificar período."}
         </p>
+        {isAdmin && consecRecepcionable ? (
+          <div className="flex flex-col gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2.5 sm:col-span-2 sm:flex-row sm:items-center sm:justify-between md:col-span-3">
+            <p className="text-[12px] text-muted-foreground">
+              {consecWorker!.nombre} ya tiene los {topeDe(consecWorker)} días. Recepciona el plan para emitir sus
+              documentos por partes en Documentos.
+            </p>
+            <Button
+              className="h-9 shrink-0"
+              disabled={recepcionando}
+              onClick={() => void recepcionarDirecto(consecWorker!.dni)}
+            >
+              {recepcionando ? "Recepcionando…" : "Recepcionar y pasar a Documentos"}
+            </Button>
+          </div>
+        ) : isAdmin && consecWorker?.flujo_estado === "RECEPCIONADO" ? (
+          <p className="text-[12px] text-success sm:col-span-2 md:col-span-3">
+            Plan recepcionado: sus documentos están en{" "}
+            <Link to="/documentos" className="font-semibold text-primary">
+              Documentos
+            </Link>
+            .
+          </p>
+        ) : null}
       </div>
       )}
 

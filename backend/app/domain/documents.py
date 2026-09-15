@@ -16,6 +16,7 @@ from docx.oxml.ns import qn
 from docx.table import Table
 
 from .calendar import parse_iso_date, vacation_record_for
+from ..org_scope import misma_persona
 from ..textnorm import strip_marks
 
 TEMPLATES_DIR = Path(__file__).resolve().parents[1] / "data" / "templates"
@@ -332,9 +333,7 @@ def build_context(
     jefe_nombre = (emp.get("jefe_nombre") or "").strip()
     if " · " in jefe_nombre:
         jefe_nombre = ""
-    es_el_jefe = bool(
-        jefe_nombre and strip_marks(jefe_nombre).casefold() == strip_marks(nombre).casefold()
-    )
+    es_el_jefe = bool(jefe_nombre and misma_persona(jefe_nombre, nombre))
     if es_el_jefe:
         jefe_nombre = ""
     if jefe_nombre and jefatura:
@@ -351,7 +350,8 @@ def build_context(
         dni=str(emp.get("dni") or "").strip(),
         empresa=razon,
         ruc=ruc,
-        jefe=jefe_nombre or (gerencia if es_el_jefe else jefatura) or jefatura,
+        # Mayúsculas como el resto de nombres del documento (el usuario JEFE puede venir en minúsculas).
+        jefe=jefe_nombre.upper() or (gerencia if es_el_jefe else jefatura) or jefatura,
         cargo_jefe=cargo_jefe,
         record=rec.get("record_vacacional") or f"{year - 1}-{year}",
         inicio=inicio,

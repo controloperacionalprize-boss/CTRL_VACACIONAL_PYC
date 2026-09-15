@@ -16,7 +16,7 @@ from .workflow import (
     OBSERVADO,
     VALIDADO,
 )
-from ..org_scope import fold_label
+from ..org_scope import fold_label, misma_persona
 
 RECORD_WINDOW_DAYS = 93  # ~3 meses calendario
 PRIORIDAD_RANK = {"informativa": 0, "proxima": 1, "importante": 2, "critica": 3}
@@ -99,11 +99,11 @@ def attach_jefe_nombres(
     ) -> list[str]:
         names: list[str] = []
         seen: set[str] = set()
-        skip_fold = fold_label(skip_nombre)
         for jkeys, nombre, dni in source:
             if skip_dni and dni and dni == skip_dni:
                 continue
-            if skip_fold and fold_label(nombre) == skip_fold:
+            # El usuario JEFE puede tener un nombre corto ("carlos coz") distinto al del maestro.
+            if skip_nombre and misma_persona(nombre, skip_nombre):
                 continue
             if worker_keys & jkeys and nombre not in seen:
                 seen.add(nombre)

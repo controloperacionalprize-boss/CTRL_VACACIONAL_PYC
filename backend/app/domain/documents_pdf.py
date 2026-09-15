@@ -126,6 +126,48 @@ def document_plain(escenario: int, ctx: DocContext) -> str:
     return "\n".join(parts)
 
 
+# Cada escenario es una secuencia de documentos separados por "break" (una hoja nueva).
+PARTES: dict[int, tuple[str, ...]] = {
+    1: ("memorando",),
+    2: ("solicitud", "convenio", "memorando"),
+    3: ("solicitud", "acuerdo", "memorando"),
+    4: ("solicitud", "convenio"),
+}
+
+PARTE_LABEL = {
+    "solicitud": "Solicitud",
+    "convenio": "Convenio",
+    "acuerdo": "Acuerdo de modificación",
+    "memorando": "Memorando",
+}
+
+
+def partes_de(escenario: int, con_memorando: bool = True) -> tuple[str, ...]:
+    """Documentos que forman el PDF de un escenario (sin memorando si el tramo aún no toca)."""
+    partes = PARTES.get(int(escenario), ())
+    if escenario in (2, 3) and not con_memorando:
+        return tuple(p for p in partes if p != "memorando")
+    return partes
+
+
+def _blocks_parte(escenario: int, ctx: DocContext, parte: str = ""):
+    """Bloques de un solo documento del escenario (solicitud, convenio…); sin parte, todos."""
+    if not parte:
+        yield from _blocks(escenario, ctx)
+        return
+    partes = partes_de(escenario, ctx.memorando)
+    if parte not in partes:
+        raise ValueError("Ese documento no forma parte de este paquete.")
+    objetivo = partes.index(parte)
+    actual = 0
+    for kind, payload in _blocks(escenario, ctx):
+        if kind == "break":
+            actual += 1
+            continue
+        if actual == objetivo:
+            yield kind, payload
+
+
 def _blocks(escenario: int, ctx: DocContext):
     if escenario == 1:
         yield from _esc_memorando(ctx, goce_continuo=True)
@@ -615,7 +657,7 @@ def pdf_page_count(data: bytes) -> int:
     return len(re.findall(rb"/Type /Page(?!s)", data))
 
 
-def render_pdf(escenario: int, ctx: DocContext) -> bytes:
+def render_pdf(escenario: int, ctx: DocContext, parte: str = "") -> bytes:
     pdf = _GthPdf(format="A4", unit="mm")
     bottom = 14
     pdf.set_auto_page_break(auto=True, margin=bottom)
@@ -656,7 +698,7 @@ def render_pdf(escenario: int, ctx: DocContext) -> bytes:
     new_page()
     usable = pdf.w - pdf.l_margin - pdf.r_margin
 
-    for kind, payload in _blocks(escenario, ctx):
+    for kind, payload in _blocks_parte(escenario, ctx, parte):
         if kind == "break":
             new_page()
             prev = ""
@@ -769,7 +811,9 @@ def render_pdf(escenario: int, ctx: DocContext) -> bytes:
     return buf.getvalue()
 
 
-def filename_pdf(escenario: int, ctx: DocContext) -> str:
+def filename_pdf(escenario: int, ctx: DocContext, parte: str = "") -> str:
     _name, slug = TEMPLATES[escenario]
     safe_dni = "".join(ch for ch in ctx.dni if ch.isalnum()) or "trabajador"
+    if parte and parte in partes_de(escenario, ctx.memorando) and len(partes_de(escenario, ctx.memorando)) > 1:
+        slug = f"{slug}_{parte}"
     return f"{slug}_{safe_dni}_{ctx.inicio.isoformat()}.pdf"

@@ -27,6 +27,10 @@ type Pendiente = Persona & {
   incluye_memorando: boolean;
   periodos: Tramo[];
   emitir_desde: string | null;
+  /** Documentos que se pueden bajar por separado (solicitud, convenio, memorando…). */
+  partes: Parte[];
+  /** Memorando que sale después del convenio: se lista para ver el plan, aún no se emite. */
+  tras_convenio?: boolean;
 };
 
 type Emitido = Persona & {
@@ -42,7 +46,10 @@ type Emitido = Persona & {
   enviado_at: string | null;
   enviado_a: string;
   envio_error: string;
+  partes: Parte[];
 };
+
+type Parte = { id: string; label: string };
 
 type Fila = Pendiente | Emitido;
 
@@ -58,7 +65,7 @@ type DocList = {
   bloqueados?: (Persona & { motivo: string })[];
 };
 
-type DocRef = { dni?: string; key?: string; id?: number };
+type DocRef = { dni?: string; key?: string; id?: number; parte?: string };
 
 const PAGE_SIZE = 25;
 
@@ -74,11 +81,18 @@ function esEmitido(f: Fila): f is Emitido {
 }
 
 function filaId(f: Fila) {
-  return esEmitido(f) ? `id:${f.id}` : `${f.dni}|${f.key}`;
+  if (esEmitido(f)) return `id:${f.id}`;
+  return f.tras_convenio ? `${f.dni}|despues:${f.tramo?.inicio}` : `${f.dni}|${f.key}`;
 }
 
-function refDe(f: Fila): DocRef {
-  return esEmitido(f) ? { id: f.id } : { dni: f.dni, key: f.key };
+/** Los memorandos que van después del convenio se ven, pero todavía no se descargan. */
+function puedeBajar(f: Fila) {
+  return esEmitido(f) || !f.tras_convenio;
+}
+
+function refDe(f: Fila, parte = ""): DocRef {
+  const base = esEmitido(f) ? { id: f.id } : { dni: f.dni, key: f.key };
+  return parte ? { ...base, parte } : base;
 }
 
 function jefeDe(p: Persona) {
@@ -143,6 +157,14 @@ function EstadoDocumento({ f }: { f: Fila }) {
       </div>
     );
   }
+  if (f.tras_convenio) {
+    return (
+      <div className="text-[11px] leading-snug text-muted-foreground">
+        <span className="inline-flex rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium">Después del convenio</span>
+        {f.emitir_desde ? <p className="mt-0.5">Desde el {formatFechaIso(f.emitir_desde)}</p> : null}
+      </div>
+    );
+  }
   if (f.estado === "proximo") {
     return (
       <div className="text-[11px] leading-snug text-muted-foreground">
@@ -155,6 +177,49 @@ function EstadoDocumento({ f }: { f: Fila }) {
     <span className="inline-flex rounded bg-[var(--primary-soft)] px-1.5 py-0.5 text-[10px] font-medium text-primary">
       Por emitir
     </span>
+  );
+}
+
+function AccionesDocumento({
+  f,
+  busy,
+  onBajar,
+  movil,
+}: {
+  f: Fila;
+  busy: string;
+  onBajar: (f: Fila, parte?: string) => void;
+  movil?: boolean;
+}) {
+  if (!puedeBajar(f)) {
+    return <p className="text-[11px] text-muted-foreground">Se habilita al emitir el convenio.</p>;
+  }
+  const id = filaId(f);
+  const partes = (f.partes || []).length > 1 ? f.partes : [];
+  return (
+    <div className={cn("flex flex-wrap gap-1.5", movil ? "" : "justify-end")}>
+      <Button
+        variant="outline"
+        className={cn("h-8 px-2.5 text-[12px]", movil && partes.length === 0 && "w-full")}
+        disabled={Boolean(busy)}
+        onClick={() => onBajar(f)}
+        title={partes.length ? "Todos los documentos en un solo PDF" : undefined}
+      >
+        <Download size={14} strokeWidth={1.75} />
+        {busy === id ? "…" : partes.length ? "Todo" : esEmitido(f) ? "Reimprimir" : "PDF"}
+      </Button>
+      {partes.map((p) => (
+        <Button
+          key={p.id}
+          variant="outline"
+          className="h-8 px-2.5 text-[12px]"
+          disabled={Boolean(busy)}
+          onClick={() => onBajar(f, p.id)}
+        >
+          {busy === `${id}:${p.id}` ? "…" : p.label}
+        </Button>
+      ))}
+    </div>
   );
 }
 
@@ -207,7 +272,8 @@ export function DocumentosPage() {
   const slice = view.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
   const byId = useMemo(() => new Map(view.map((f) => [filaId(f), f])), [view]);
   const marcadas = selected.map((id) => byId.get(id)).filter((f): f is Fila => Boolean(f));
-  const objetivo = marcadas.length ? marcadas : view;
+  const bajables = useMemo(() => view.filter(puedeBajar), [view]);
+  const objetivo = marcadas.length ? marcadas : bajables;
   const maxZip = data?.max_zip || 40;
   const maxEnvio = data?.max_envio || 20;
 
@@ -237,14 +303,17 @@ export function DocumentosPage() {
     }
   }
 
-  function descargarUno(f: Fila) {
-    return run(filaId(f), () =>
-      downloadFile(
+  function descargarUno(f: Fila, parte = "") {
+    return run(parte ? `${filaId(f)}:${parte}` : filaId(f), async () => {
+      await downloadFile(
         "/api/documentos/descargar",
-        { method: "POST", body: JSON.stringify({ year: params.year, doc: refDe(f) }) },
+        { method: "POST", body: JSON.stringify({ year: params.year, doc: refDe(f, parte) }) },
         "documento.pdf"
-      )
-    );
+      );
+      if (parte && !esEmitido(f)) {
+        setOk("Documento emitido. Sus demás partes quedan en la pestaña Emitidos para bajarlas por separado.");
+      }
+    });
   }
 
   function descargarZip(targets: Fila[]) {
@@ -255,7 +324,7 @@ export function DocumentosPage() {
     return run("zip", () =>
       downloadFile(
         "/api/documentos/zip",
-        { method: "POST", body: JSON.stringify({ year: params.year, docs: targets.map(refDe) }) },
+        { method: "POST", body: JSON.stringify({ year: params.year, docs: targets.map((f) => refDe(f)) }) },
         `documentos_gth_${params.year}.zip`
       )
     );
@@ -269,7 +338,7 @@ export function DocumentosPage() {
     return run("correo", async () => {
       const res = await api<{ enviados: number; errores: string[] }>("/api/documentos/enviar", {
         method: "POST",
-        body: JSON.stringify({ year: params.year, docs: targets.map(refDe) }),
+        body: JSON.stringify({ year: params.year, docs: targets.map((f) => refDe(f)) }),
       });
       const extra = res.errores.length ? ` No se pudo: ${res.errores.slice(0, 4).join(" ")}` : "";
       setOk(`${res.enviados === 1 ? "Se envió 1 documento" : `Se enviaron ${res.enviados} documentos`} por correo.${extra}`);
@@ -449,10 +518,10 @@ export function DocumentosPage() {
                     <label className="flex items-center gap-2 text-[13px] font-medium">
                       <input
                         type="checkbox"
-                        checked={view.length > 0 && selected.length === view.length}
-                        onChange={(e) => setSelected(e.target.checked ? view.map(filaId) : [])}
+                        checked={bajables.length > 0 && selected.length === bajables.length}
+                        onChange={(e) => setSelected(e.target.checked ? bajables.map(filaId) : [])}
                       />
-                      Marcar todo ({view.length})
+                      Marcar todo ({bajables.length})
                     </label>
                     <p className="text-[12px] text-muted-foreground">
                       ZIP hasta {maxZip} · correo hasta {maxEnvio}
@@ -464,7 +533,7 @@ export function DocumentosPage() {
                     const id = filaId(f);
                     return (
                       <div key={id} className="flex items-start gap-3 px-4 py-3">
-                        {puedeEmitir ? (
+                        {puedeEmitir && puedeBajar(f) ? (
                           <input
                             type="checkbox"
                             className="mt-1"
@@ -485,25 +554,17 @@ export function DocumentosPage() {
                           </div>
                           <DetalleDocumento f={f} />
                           <EstadoDocumento f={f} />
-                          <Button
-                            variant="outline"
-                            className="h-9 w-full"
-                            disabled={Boolean(busy)}
-                            onClick={() => void descargarUno(f)}
-                          >
-                            <Download size={16} strokeWidth={1.75} />
-                            {busy === id ? "Descargando…" : esEmitido(f) ? "Reimprimir PDF" : "Descargar PDF"}
-                          </Button>
+                          <AccionesDocumento f={f} busy={busy} movil onBajar={(x, parte) => void descargarUno(x, parte)} />
                         </div>
                       </div>
                     );
                   })}
                 </div>
                 <div className="hidden overflow-x-auto md:block">
-                  <table className="w-full min-w-[900px] text-sm">
+                  <table className="w-full min-w-[720px] text-sm">
                     <thead className="bg-muted/60 text-left">
                       <tr>
-                        {[puedeEmitir ? "" : null, "Trabajador", "Área · Jefe", "Documento", "Estado", ""]
+                        {[puedeEmitir ? "" : null, "Trabajador", "Área · Jefe", "Documento y descarga", "Estado"]
                           .filter((h) => h !== null)
                           .map((h, i) => (
                             <th
@@ -524,6 +585,7 @@ export function DocumentosPage() {
                               <td className="w-10 px-3 py-2.5">
                                 <input
                                   type="checkbox"
+                                  disabled={!puedeBajar(f)}
                                   checked={selected.includes(id)}
                                   onChange={(e) =>
                                     setSelected((prev) => (e.target.checked ? [...prev, id] : prev.filter((x) => x !== id)))
@@ -541,21 +603,12 @@ export function DocumentosPage() {
                             </td>
                             <td className="px-3 py-2.5">
                               <DetalleDocumento f={f} />
+                              <div className="mt-2">
+                                <AccionesDocumento f={f} busy={busy} movil onBajar={(x, parte) => void descargarUno(x, parte)} />
+                              </div>
                             </td>
                             <td className="px-3 py-2.5">
                               <EstadoDocumento f={f} />
-                            </td>
-                            <td className="whitespace-nowrap px-3 py-2.5 text-right">
-                              <Button
-                                variant="outline"
-                                className="h-9 px-3"
-                                disabled={Boolean(busy)}
-                                title={tab === "proximo" ? "Todavía no toca; puedes adelantarlo si hace falta." : undefined}
-                                onClick={() => void descargarUno(f)}
-                              >
-                                <Download size={16} strokeWidth={1.75} />
-                                {busy === id ? "…" : esEmitido(f) ? "Reimprimir" : "PDF"}
-                              </Button>
                             </td>
                           </tr>
                         );
