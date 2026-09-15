@@ -13,7 +13,15 @@ from fpdf import FPDF
 from fpdf.enums import XPos, YPos
 from fpdf.fonts import FontFace
 
-from .documents import TEMPLATES, TEMPLATES_DIR, DocContext, fecha_larga, fecha_slash, rango_narrativo
+from .documents import (
+    TEMPLATES,
+    TEMPLATES_DIR,
+    DocContext,
+    fecha_larga,
+    fecha_slash,
+    periodo_label,
+    rango_narrativo,
+)
 
 FONTS_DIR = Path(__file__).resolve().parents[1] / "data" / "fonts"
 LOGO_PATH = TEMPLATES_DIR / "logo_gth.png"
@@ -85,22 +93,14 @@ class SignCol:
 
 
 def _period_rows(periodos) -> list[tuple[str, str, str, str]]:
-    labels = (
-        "Primer periodo",
-        "Segundo periodo",
-        "Tercer periodo",
-        "Cuarto periodo",
-        "Quinto periodo",
-    )
     needed = max(len(periodos), 3)
     rows: list[tuple[str, str, str, str]] = []
     for i in range(needed):
-        label = labels[i] if i < len(labels) else f"Periodo {i + 1}"
         if i < len(periodos):
             p = periodos[i]
-            rows.append((label, str(p["dias"]), fecha_slash(p["inicio"]), fecha_slash(p["fin"])))
+            rows.append((periodo_label(i), str(p["dias"]), fecha_slash(p["inicio"]), fecha_slash(p["fin"])))
         else:
-            rows.append((label, "", "", ""))
+            rows.append((periodo_label(i), "", "", ""))
     return rows
 
 
@@ -145,7 +145,7 @@ def _encabezado_solicitud(titulo: str, ctx: DocContext):
     yield "meta", "Atención:"
     yield "meta", (ctx.jefe or "").strip() or "Nombre del jefe de sub área o jefe inmediato"
     yield "meta", (ctx.cargo_jefe or "").strip() or "(Cargo)"
-    yield "meta", "Cc: Sub Gerencia de Personas y Cultura"
+    yield "meta", "Cc: Sub Gerencia de Personas & Cultura"
     yield "meta", "Área Administración de Personal- Remuneraciones"
 
 
@@ -181,7 +181,7 @@ def _firmas_acuerdo(ctx: DocContext, *, empleador_primero: bool = True):
 
 def _firmas_memorando(_ctx: DocContext):
     yield "signs", (
-        SignCol("", "", "SUB GERENCIA DE PERSONAS Y CULTURA"),
+        SignCol("", "", "SUB GERENCIA DE PERSONAS & CULTURA"),
         SignCol("", "", "FIRMA Y HUELLA DEL TRABAJADOR"),
     )
 
@@ -283,6 +283,8 @@ def _esc_fraccionamiento(ctx: DocContext):
 
     if not ctx.memorando:
         return
+    # El fraccionamiento aprobado es por el total (30); el memorando otorga solo la salida que
+    # toca ahora (ctx.inicio–fin). Las siguientes salidas llevan su propio memorando.
     yield "break", None
     yield from _esc_memorando(
         ctx,
@@ -291,21 +293,13 @@ def _esc_fraccionamiento(ctx: DocContext):
         cuerpo=[
             (
                 "Por medio de la presente cumplimos con comunicarle que se le concede su solicitud "
-                f"de fraccionamiento de descanso vacacional por el periodo de {ctx.dias} días, "
+                f"de fraccionamiento de descanso vacacional de {dias_con_palabras(total)}, "
                 f"correspondiente al récord vacacional {ctx.record}."
             ),
+            ART8,
             (
-                "De acuerdo con lo establecido en el artículo 8 del D.S.002-2019-TR «las vacaciones "
-                "se pueden fraccionar de la siguiente manera: i) Un primer bloque de al menos quince (15) "
-                "días calendario, que se goza de forma ininterrumpida o puede distribuirse en dos periodos "
-                "de los cuales uno es de al menos siete (7) días y el otro de al menos ocho (8) días "
-                "calendario ininterrumpido. ii) El resto del descanso vacacional puede gozarse en periodos "
-                "mínimos de un (1) día calendario. iii) Las partes pueden acordar el orden en el que se "
-                "goza lo señalado en los numerales precedentes."
-            ),
-            (
-                "Por lo tanto, se concede a su solicitud y se le otorga "
-                f"{ctx.dias} días de descanso vacacional, "
+                "Por lo tanto, conforme al acuerdo de fraccionamiento, se le otorga "
+                f"{dias_con_palabras(ctx.dias)} de descanso vacacional, "
                 f"programándose {rango_narrativo(ctx.inicio, ctx.fin)}."
             ),
         ],
@@ -406,7 +400,7 @@ def _esc_adelanto(ctx: DocContext):
     yield "meta", "Atención:"
     yield "meta", (ctx.jefe or "").strip() or "Nombre del jefe de sub área o jefe inmediato"
     yield "meta", (ctx.cargo_jefe or "").strip() or "(Cargo)"
-    yield "meta", "Cc: Sub Gerencia de Personas y Cultura."
+    yield "meta", "Cc: Sub Gerencia de Personas & Cultura."
     yield "meta", "Área Administración de Personal- Remuneraciones"
     yield "p", "Estimados Sres.:"
     yield "p", (

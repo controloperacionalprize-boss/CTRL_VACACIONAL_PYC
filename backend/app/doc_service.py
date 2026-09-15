@@ -55,7 +55,7 @@ def lock_persona(cur, year: int, dni: str) -> None:
 def attach_jefes(cur, rows: list[dict]) -> None:
     """Completa jefe_nombre (maestro de jefes y usuarios JEFE) para Documentos y el PDF."""
     cur.execute(
-        """SELECT nombre, area, jefatura, gerencia, cargo_actual
+        """SELECT dni, nombre, area, jefatura, gerencia, cargo_actual
            FROM employees
            WHERE activo = TRUE AND cargo_actual ILIKE %s""",
         ("JEFE%",),

@@ -72,8 +72,8 @@ def attach_jefe_nombres(
 ) -> list[dict]:
     """Completa jefe_nombre cruzando área/jefatura con jefes del maestro y, si falta, usuarios JEFE."""
 
-    def indexed(rows: list[dict] | None) -> list[tuple[set[str], str]]:
-        out: list[tuple[set[str], str]] = []
+    def indexed(rows: list[dict] | None) -> list[tuple[set[str], str, str]]:
+        out: list[tuple[set[str], str, str]] = []
         for j in rows or []:
             nombre = (
                 j.get("nombre")
@@ -87,13 +87,24 @@ def attach_jefe_nombres(
                 continue
             keys = _label_keys(j.get("area") or "", j.get("jefatura") or "")
             if keys:
-                out.append((keys, nombre))
+                out.append((keys, nombre, str(j.get("dni") or "").strip()))
         return out
 
-    def match_names(worker_keys: set[str], source: list[tuple[set[str], str]]) -> list[str]:
+    def match_names(
+        worker_keys: set[str],
+        source: list[tuple[set[str], str, str]],
+        *,
+        skip_dni: str = "",
+        skip_nombre: str = "",
+    ) -> list[str]:
         names: list[str] = []
         seen: set[str] = set()
-        for jkeys, nombre in source:
+        skip_fold = fold_label(skip_nombre)
+        for jkeys, nombre, dni in source:
+            if skip_dni and dni and dni == skip_dni:
+                continue
+            if skip_fold and fold_label(nombre) == skip_fold:
+                continue
             if worker_keys & jkeys and nombre not in seen:
                 seen.add(nombre)
                 names.append(nombre)
@@ -103,7 +114,11 @@ def attach_jefe_nombres(
     secondary = indexed(extras)
     for w in workers:
         keys = _label_keys(w.get("area") or "", w.get("jefatura") or "")
-        names = match_names(keys, primary) or match_names(keys, secondary)
+        skip_dni = str(w.get("dni") or "").strip()
+        skip_nombre = str(w.get("nombre") or "").strip()
+        names = match_names(keys, primary, skip_dni=skip_dni, skip_nombre=skip_nombre) or match_names(
+            keys, secondary, skip_dni=skip_dni, skip_nombre=skip_nombre
+        )
         w["jefe_nombre"] = " · ".join(names)
     return workers
 

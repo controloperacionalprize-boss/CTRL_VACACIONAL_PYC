@@ -39,6 +39,7 @@ from ..domain.calendar import (
     week_dates,
     week_is_locked,
 )
+from ..domain.doc_emision import calendario_documentos
 from ..domain.documents_pdf import render_html
 from ..domain.plan import log_change, persist_employee, sparse_weeks, validate_plan
 from ..domain.workflow import (
@@ -105,11 +106,15 @@ def _documento_plan(cur, user: dict, emp: dict, daily_set, targets, year: int, t
     """Para la respuesta de guardar: {"documento": {...}} o {"documento_falta": motivo}. Solo Personas y Cultura."""
     if not _es_admin(user):
         return {}
-    items, falta, _dates = _pendientes_plan(cur, emp, daily_set, year, today)
+    items, falta, dates = _pendientes_plan(cur, emp, daily_set, year, today)
     if not items:
         return {"documento_falta": falta} if falta else {}
     first = items[0]
-    return {"documento": {"escenario": first["escenario"], "titulo": first["titulo"], "key": first["key"]}}
+    periodos = vacation_periods(daily_set, str(emp["dni"]), year, today, dates=dates)
+    return {
+        "documento": {"escenario": first["escenario"], "titulo": first["titulo"], "key": first["key"]},
+        "calendario_documentos": calendario_documentos(items, periodos, today),
+    }
 
 
 def _load_employee_plan(cur, user: dict, dni: str, year: int):

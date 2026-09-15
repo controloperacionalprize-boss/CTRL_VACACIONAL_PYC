@@ -176,7 +176,7 @@ def test_pdf_memorando_incluye_datos_y_no_deja_placeholders():
     assert "12345678" in text
     assert "26 de agosto de 2026" in text
     assert "30 (treinta) días" in text
-    assert "SUB GERENCIA DE PERSONAS Y CULTURA" in text
+    assert "SUB GERENCIA DE PERSONAS & CULTURA" in text
     assert "FIRMA Y HUELLA DEL TRABAJADOR" in text
     assert "GTH" not in text.split("Atentamente.")[-1]
     assert "xxxxx" not in text.lower()
@@ -254,12 +254,20 @@ def test_pdf_fraccionamiento_llena_tablas_y_firmas():
     assert "ANA PEREZ GOMEZ" in text
     assert "YESSICA SELENE TORRES VILCHEZ" in text
     assert "EL EMPLEADOR" in text
-    assert "SUB GERENCIA DE PERSONAS Y CULTURA" in text
+    assert "SUB GERENCIA DE PERSONAS & CULTURA" in text
     assert "FIRMA Y HUELLA DEL TRABAJADOR" in text
     assert "JEFE INMEDIATO" not in text
+    assert "Personas & Cultura" in text
+    memorando = text.split("MEMORANDO DE VACACIONES")[-1]
+    # El fraccionamiento aprobado es por 30; el memorando otorga solo la salida de ahora.
+    assert "de 30 (treinta) días" in memorando
+    assert "se le otorga 15 (quince) días" in memorando
+    assert "del 1 al 15 de septiembre" in memorando
     pie = text.split("Atentamente.")[-1]
     assert "ANA PEREZ" not in pie
     assert "FIRMA Y HUELLA DEL TRABAJADOR" in pie
+    solicitud = text.split("ACUERDO COMÚN")[0]
+    assert solicitud.count("ANA PEREZ GOMEZ") == 1, "la solicitud lleva una sola firma del trabajador"
 
 
 def test_pdf_adelanto_usa_rango_y_record():
@@ -315,9 +323,57 @@ def test_pdf_memorando_sin_nombre_deja_texto_de_firma():
 
     ctx = _ctx(emp=_emp(nombre="", dni=""))
     text = document_plain(1, ctx)
-    assert "SUB GERENCIA DE PERSONAS Y CULTURA" in text
+    assert "SUB GERENCIA DE PERSONAS & CULTURA" in text
     assert "FIRMA Y HUELLA DEL TRABAJADOR" in text
     pie = text.split("Atentamente.")[-1]
     assert "ANA PEREZ" not in pie
     assert "DNI N°" not in pie
+
+
+def test_pdf_sexto_periodo_no_dice_periodo_6():
+    from app.domain.documents_pdf import document_plain
+
+    periodos = [
+        {"inicio": date(2026, 9, 15), "fin": date(2026, 9, 21), "dias": 7},
+        {"inicio": date(2026, 9, 28), "fin": date(2026, 10, 5), "dias": 8},
+        {"inicio": date(2026, 10, 12), "fin": date(2026, 10, 14), "dias": 3},
+        {"inicio": date(2026, 10, 21), "fin": date(2026, 10, 23), "dias": 3},
+        {"inicio": date(2026, 11, 2), "fin": date(2026, 11, 6), "dias": 5},
+        {"inicio": date(2026, 11, 16), "fin": date(2026, 11, 19), "dias": 4},
+    ]
+    text = document_plain(
+        2,
+        _ctx(
+            inicio=date(2026, 9, 15),
+            fin=date(2026, 9, 21),
+            dias=7,
+            periodos=periodos,
+            programmed=[date(2026, 9, 15)],
+        ),
+    )
+    assert "Sexto periodo" in text
+    assert "Periodo 6" not in text
+    memorando = text.split("MEMORANDO DE VACACIONES")[-1]
+    assert "de 30 (treinta) días" in memorando
+    assert "se le otorga 7 (siete) días" in memorando
+    assert "del 15 al 21 de septiembre" in memorando
+
+
+def test_solicitud_no_se_dirige_al_propio_trabajador_si_es_jefe():
+    from app.domain.documents_pdf import document_plain
+
+    ctx = _ctx(
+        emp=_emp(
+            nombre="COZ DE LA CRUZ CARLOS YORDANO",
+            dni="45840854",
+            jefatura="CONTROL OPERACIONAL",
+            gerencia="Operaciones",
+            jefe_nombre="COZ DE LA CRUZ CARLOS YORDANO",
+        )
+    )
+    solicitud = document_plain(2, ctx).split("ACUERDO COMÚN")[0]
+    atencion = solicitud.split("Estimados Señores:")[0]
+    assert "COZ DE LA CRUZ CARLOS YORDANO" not in atencion
+    assert "Operaciones" in atencion
+    assert "Gerente de Operaciones" in atencion
 

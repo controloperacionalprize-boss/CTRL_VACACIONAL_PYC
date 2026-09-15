@@ -203,3 +203,13 @@ def test_jefe_nombre_no_mezcla_areas_del_mismo_codigo():
         ],
     )
     assert workers[0]["jefe_nombre"] == "REYES SANCHEZ JOSSELYN MICHELLE"
+
+
+def test_jefe_nombre_no_se_autoasigna_si_el_trabajador_es_el_jefe():
+    workers = [_w(dni="45840854", nombre="COZ DE LA CRUZ CARLOS YORDANO", area="CONTROL OPERACIONAL", jefatura="CONTROL OPERACIONAL")]
+    attach_jefe_nombres(
+        workers,
+        [{"dni": "45840854", "nombre": "COZ DE LA CRUZ CARLOS YORDANO", "area": "CONTROL OPERACIONAL", "jefatura": "CONTROL OPERACIONAL"}],
+        [],
+    )
+    assert workers[0]["jefe_nombre"] == ""

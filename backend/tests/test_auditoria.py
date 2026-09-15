@@ -44,3 +44,52 @@ def test_validar_plan_no_marca_art8_en_adelanto():
     daily = _dias("2", date(2026, 10, 5), 5)
     _errors, _w, groups = validate_plan([NUEVO], {}, daily, 2026, today=HOY)
     assert "art8" not in {g["code"] for g in groups}
+
+
+def test_plan_15_mas_tramos_de_3_memorando_de_15_y_calendario_por_partes():
+    """Caso probado en producción: 15 días y luego tramos de 3. El memorando va con los 15."""
+    from app.doc_service import item_context
+    from app.domain.doc_emision import calendario_documentos, documentos_pendientes
+    from app.domain.documents_pdf import document_plain
+
+    hoy = date(2026, 9, 15)
+    daily = _dias("1", date(2026, 9, 21), 15)
+    for inicio in (date(2026, 10, 12), date(2026, 10, 26), date(2026, 11, 9), date(2026, 11, 23), date(2026, 12, 7)):
+        daily |= _dias("1", inicio, 3)
+    periodos = vacation_periods(daily, "1", 2026, hoy)
+    assert [p["dias"] for p in periodos] == [15, 3, 3, 3, 3, 3]
+    items = documentos_pendientes(periodos=periodos, emitidos=[], today=hoy)
+    assert items[0]["tramo"]["dias"] == 15
+    memo = document_plain(2, item_context(APTO, items[0], year=2026, fecha_doc=hoy, programmed=[]))
+    memo = memo.split("MEMORANDO DE VACACIONES")[-1]
+    assert "se le otorga 15 (quince) días" in memo
+    assert "del 21 de septiembre al 5 de octubre" in memo
+    cal = calendario_documentos(items, periodos, hoy)
+    assert [c["tipo"] for c in cal] == ["fraccionamiento"] + ["memorando"] * 5
+    assert cal[0]["estado"] == "por_emitir"
+    assert {c["estado"] for c in cal[3:]} == {"proximo"}
+
+
+def test_recepcion_directa_solo_admin_y_desde_borrador():
+    import pytest
+
+    from app.domain.workflow import (
+        BORRADOR,
+        ENVIADO,
+        RECEPCIONADO,
+        apply_recepcion_directa,
+        flujo_from_row,
+    )
+
+    admin = {"rol": "ADMIN", "is_admin": True, "correo": "pyc@x.pe"}
+    row = flujo_from_row(None)
+    assert row["estado"] == BORRADOR
+    out = apply_recepcion_directa(row, admin)
+    assert out["estado"] == RECEPCIONADO
+    assert out["admin_correo"] == "pyc@x.pe"
+    assert out["jefe_correo"] == "" and out["gerente_correo"] == ""
+    with pytest.raises(ValueError, match="Personas y Cultura"):
+        apply_recepcion_directa(row, {"rol": "JEFE"})
+    enviado = {**row, "estado": ENVIADO}
+    with pytest.raises(ValueError, match="borrador"):
+        apply_recepcion_directa(enviado, admin)

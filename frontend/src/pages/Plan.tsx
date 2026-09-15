@@ -20,7 +20,7 @@ import { EmpAvatar } from "../components/EmpAvatar";
 import { CalendarClock, CalendarDays, CalendarPlus, CalendarRange, Eye, FileDown, Users, UserCheck, UserX } from "lucide-react";
 import { FlujoBadge, lockReasonFor, WorkerCard, WorkerRow } from "./plan/WorkerGrid";
 import { JefeEquipo } from "./plan/JefeEquipo";
-import type { DocReady, DocumentoResp, Plan, VacPeriod, WeekDay, Worker } from "./plan/types";
+import type { CalendarioDoc, DocReady, DocumentoResp, Plan, VacPeriod, WeekDay, Worker } from "./plan/types";
 
 const DAY_SHORT = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
 
@@ -193,6 +193,8 @@ export function PlanPage() {
   const [loadError, setLoadError] = useState("");
   const [docReady, setDocReady] = useState<DocReady | null>(null);
   const [docFalta, setDocFalta] = useState("");
+  const [calendario, setCalendario] = useState<CalendarioDoc[]>([]);
+  const [recepcionando, setRecepcionando] = useState(false);
   const [docBusy, setDocBusy] = useState(false);
   const [docError, setDocError] = useState("");
   const [docPreviewUrl, setDocPreviewUrl] = useState<string | null>(null);
@@ -256,6 +258,7 @@ export function PlanPage() {
       setDocError("");
       setDocReady(res.documento ? { ...res.documento, dni, year: params.year } : null);
       setDocFalta(res.documento ? "" : res.documento_falta || "");
+      setCalendario(res.documento ? res.calendario_documentos || [] : []);
     },
     [params.year]
   );
@@ -811,6 +814,30 @@ export function PlanPage() {
     }
   }
 
+  async function recepcionarDirecto() {
+    if (!docReady) return;
+    setRecepcionando(true);
+    setDocError("");
+    try {
+      const res = await api<{ recepcionados: number; errors: string[] }>("/api/flujo/recepcionar-directo", {
+        method: "POST",
+        body: JSON.stringify({ year: docReady.year, dnis: [docReady.dni] }),
+      });
+      if (!res.recepcionados) {
+        setDocError(res.errors?.join(" ") || "No se pudo recepcionar el plan.");
+        return;
+      }
+      await load();
+      setOk("Plan recepcionado. Sus documentos ya están en Documentos: ahí se emite cada uno en su momento.");
+      setDocReady(null);
+      setCalendario([]);
+    } catch (e) {
+      setDocError(e instanceof Error ? e.message : "No se pudo recepcionar el plan.");
+    } finally {
+      setRecepcionando(false);
+    }
+  }
+
   function documentoRequest(doc: DocReady): RequestInit {
     return {
       method: "POST",
@@ -862,6 +889,14 @@ export function PlanPage() {
   if (!plan) return <p className="text-sm text-muted-foreground">Cargando plan…</p>;
 
   const isAdmin = Boolean(user?.is_admin);
+  const docWorker = docReady ? plan.workers.find((w) => w.dni === docReady.dni) : undefined;
+  // Recepción directa: plan completo en borrador/observado (el backend vuelve a validar 30 días y Art. 8).
+  const recepcionable = Boolean(
+    docWorker &&
+      !esAdelanto(docWorker) &&
+      goceCompleto(docWorker.total_dias, topeDe(docWorker)) &&
+      ["BORRADOR", "OBSERVADO", "", undefined].includes(docWorker.flujo_estado)
+  );
   const isJefe = Boolean(user?.is_jefe);
   const isGerente = Boolean(user?.is_gerente) && !isAdmin && !isJefe;
   const minProgramable = primerDia(plan);
@@ -988,9 +1023,45 @@ export function PlanPage() {
                 {docBusy ? "Preparando PDF…" : `Descargar ${docReady.titulo}`}
               </Button>
               <p className="mt-1.5 w-full text-[11px] text-muted-foreground">
-                Vista previa en PDF. La emisión oficial (y el registro de qué se entregó) se hace en Documentos,
-                cuando el plan esté recepcionado.
+                Vista previa del documento que toca ahora. La emisión oficial se hace en Documentos, una vez
+                recepcionado el plan.
               </p>
+            </div>
+          ) : null}
+          {isAdmin && docReady && calendario.length ? (
+            <div className="mt-3 rounded-lg border border-border bg-card px-3 py-2.5">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                Documentos de este plan, por partes
+              </p>
+              <ol className="mt-1.5 space-y-1 text-[12px] text-foreground">
+                {calendario.map((d, i) => (
+                  <li key={`${d.tipo}-${d.tramo?.inicio || i}`} className="flex flex-wrap justify-between gap-x-3">
+                    <span>
+                      {i + 1}. {d.titulo}
+                      {d.tramo
+                        ? d.tipo === "memorando"
+                          ? ` · ${formatFechaIso(d.tramo.inicio)}–${formatFechaIso(d.tramo.fin)} (${d.tramo.dias} días)`
+                          : ` + memorando ${formatFechaIso(d.tramo.inicio)}–${formatFechaIso(d.tramo.fin)} (${d.tramo.dias} días)`
+                        : ""}
+                    </span>
+                    <span className="text-muted-foreground">
+                      {d.estado === "por_emitir"
+                        ? "Ahora"
+                        : `Desde el ${formatFechaIso(d.emitir_desde)}`}
+                    </span>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          ) : null}
+          {isAdmin && docReady && recepcionable ? (
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <Button className="h-9" disabled={recepcionando} onClick={() => void recepcionarDirecto()}>
+                {recepcionando ? "Recepcionando…" : "Recepcionar y pasar a Documentos"}
+              </Button>
+              <span className="text-[11px] text-muted-foreground">
+                Plan completo programado por Personas y Cultura: queda recepcionado sin pasar por jefe ni gerente.
+              </span>
             </div>
           ) : null}
           {docError ? <p className="mt-2 text-[12px] text-error">{docError}</p> : null}

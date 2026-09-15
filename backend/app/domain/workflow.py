@@ -182,6 +182,35 @@ def allowed_transition(role: str, actual: str, destino: str) -> bool:
     return False
 
 
+def apply_recepcion_directa(row: dict, user: dict) -> dict:
+    """Personas y Cultura recepciona un plan que programó sin pasar por jefe ni gerente.
+
+    Solo desde Borrador u Observado. Quien llama valida antes que el plan esté completo (30 días
+    y Art. 8). jefe_correo y gerente_correo quedan vacíos: así se distingue en el seguimiento.
+    """
+    if effective_role(user) != "ADMIN":
+        raise ValueError("Solo Personas y Cultura puede recepcionar directamente.")
+    actual = norm_estado(row.get("estado"))
+    if actual not in EDITABLE:
+        raise ValueError(
+            f"El plan está {ESTADO_LABEL.get(actual, actual).lower()}: la recepción directa es solo "
+            "para planes en borrador u observados."
+        )
+    out = dict(row)
+    out.update({
+        "estado": RECEPCIONADO,
+        "apto": True,
+        "jefe_correo": "",
+        "enviado_at": None,
+        "gerente_correo": "",
+        "validado_at": None,
+        "admin_correo": user.get("correo") or "",
+        "recepcionado_at": "now",
+        "observacion": "",
+    })
+    return out
+
+
 def apply_transition(row: dict, user: dict, destino: str, *, observacion: str = "", today: date | None = None) -> dict:
     role = effective_role(user)
     actual = norm_estado(row.get("estado"))

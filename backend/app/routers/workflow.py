@@ -24,6 +24,7 @@ from ..domain.workflow import (
     OBSERVADO,
     RECEPCIONADO,
     VALIDADO,
+    apply_recepcion_directa,
     apply_transition,
     apply_uploaded_periods,
     bandeja_estados_for,
@@ -234,6 +235,39 @@ def recepcionar(body: FlujoAction, user: dict = Depends(get_current_user)):
         raise HTTPException(403, "Solo Personas y Cultura recepciona la validación del gerente.")
     with get_conn() as conn:
         return _apply_destino(conn.cursor(), user, body.year, body.dnis, RECEPCIONADO)
+
+
+@router.post("/recepcionar-directo")
+def recepcionar_directo(body: FlujoAction, user: dict = Depends(get_current_user)):
+    """Plan que programó Personas y Cultura: pasa a Recepcionado y sus documentos a Documentos."""
+    if effective_role(user) != "ADMIN":
+        raise HTTPException(403, "Solo Personas y Cultura puede recepcionar directamente.")
+    today = today_lima()
+    ok, errors = [], []
+    with get_conn() as conn:
+        cur = conn.cursor()
+        emps = []
+        for dni in dict.fromkeys(str(d).strip() for d in body.dnis if str(d).strip()):
+            emp = get_employee(cur, user, dni)
+            if emp:
+                emps.append(emp)
+            else:
+                errors.append(f"{dni}: no está en tu alcance.")
+        daily_set, targets = load_scope_plan(cur, body.year, emps)
+        flujos = load_flujos(cur, body.year, [e["dni"] for e in emps])
+        for emp in emps:
+            dni = str(emp["dni"])
+            try:
+                # Mismas reglas que el envío del jefe: apto, derecho completo y Art. 8.
+                reject_if_cannot_send(emp, daily_set, targets, body.year, today)
+                updated = apply_recepcion_directa(flujos.get(dni) or flujo_from_row(None), user)
+                cumple = cumple_record_de(emp, today)
+                updated["cumple_record"] = cumple.isoformat() if cumple else None
+                upsert_flujo(cur, body.year, dni, updated)
+                ok.append({"dni": dni, "nombre": emp["nombre"], "estado": RECEPCIONADO})
+            except ValueError as exc:
+                errors.append(str(exc) if str(exc).startswith(emp["nombre"]) else f"{emp['nombre']}: {exc}")
+    return {"ok": ok, "errors": errors, "recepcionados": len(ok), "rechazados": len(errors)}
 
 
 @router.get("/excel")

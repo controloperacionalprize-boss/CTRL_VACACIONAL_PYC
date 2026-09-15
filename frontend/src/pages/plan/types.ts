@@ -38,7 +38,20 @@ export type VacPeriod = {
 export type DocumentoMeta = { escenario: number; titulo: string; key: string };
 
 /** Respuesta de guardar: el documento listo o, si el plan aún no está completo, el motivo. */
-export type DocumentoResp = { documento?: DocumentoMeta; documento_falta?: string };
+/** Un documento del plan: lo que toca ahora ("por_emitir") o después ("proximo", desde emitir_desde). */
+export type CalendarioDoc = {
+  titulo: string;
+  tipo: string;
+  tramo: { inicio: string; fin: string; dias: number } | null;
+  estado: "por_emitir" | "proximo";
+  emitir_desde: string | null;
+};
+
+export type DocumentoResp = {
+  documento?: DocumentoMeta;
+  documento_falta?: string;
+  calendario_documentos?: CalendarioDoc[];
+};
 
 export type DocReady = DocumentoMeta & {
   dni: string;

@@ -40,7 +40,7 @@ def _workers_for_alerts(cur, user: dict, year: int, empresa, gerencia, area, tod
         })
     rows = enrich_workers(rows, flujos, user, today)
     cur.execute(
-        """SELECT nombre, area, jefatura, gerencia, cargo_actual
+        """SELECT dni, nombre, area, jefatura, gerencia, cargo_actual
            FROM employees
            WHERE activo = TRUE AND cargo_actual ILIKE %s""",
         ("JEFE%",),

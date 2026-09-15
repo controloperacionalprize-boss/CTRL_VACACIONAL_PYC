@@ -49,6 +49,25 @@ MESES = (
     "diciembre",
 )
 
+PERIODO_LABELS = (
+    "Primer periodo",
+    "Segundo periodo",
+    "Tercer periodo",
+    "Cuarto periodo",
+    "Quinto periodo",
+    "Sexto periodo",
+    "Séptimo periodo",
+    "Octavo periodo",
+    "Noveno periodo",
+    "Décimo periodo",
+)
+
+
+def periodo_label(index: int) -> str:
+    if 0 <= index < len(PERIODO_LABELS):
+        return PERIODO_LABELS[index]
+    return f"Periodo {index + 1}"
+
 _NS_XML = "{http://www.w3.org/XML/1998/namespace}space"
 _PLACEHOLDER = r"(?:x+|X+|…+)"
 _FLAGS = re.IGNORECASE
@@ -260,13 +279,12 @@ def fill_text(text: str, ctx: DocContext) -> str:
 
 
 def _fill_periods_table(table: Table, periods: list[dict] | tuple[dict, ...]) -> None:
-    labels = ("Primer periodo", "Segundo periodo", "Tercer periodo", "Cuarto periodo", "Quinto periodo")
     needed = max(len(periods), 3)
     while len(table.rows) < needed + 1:
         table._tbl.append(deepcopy(table.rows[-1]._tr))
     for i in range(needed):
         row = table.rows[i + 1]
-        label = labels[i] if i < len(labels) else f"Periodo {i + 1}"
+        label = periodo_label(i)
         if i < len(periods):
             p = periods[i]
             vals = (label, str(p["dias"]), fecha_slash(p["inicio"]), fecha_slash(p["fin"]))
@@ -305,27 +323,36 @@ def build_context(
 ) -> DocContext:
     ingreso = parse_iso_date(emp.get("fecha_ingreso"))
     rec = vacation_record_for(ingreso, programmed or [], year, today)
+    nombre = (emp.get("nombre") or "").strip()
     jefatura = (emp.get("jefatura") or "").strip()
     gerencia = (emp.get("gerencia") or "").strip()
     # "Atención:" va dirigido a una persona. Si se conoce un único jefe del área, su nombre;
     # si hay varios (vienen unidos con " · ") o ninguno, el nombre de la jefatura como antes.
+    # Si el trabajador es el jefe del área, no se auto-dirige la solicitud: pasa a la gerencia.
     jefe_nombre = (emp.get("jefe_nombre") or "").strip()
     if " · " in jefe_nombre:
         jefe_nombre = ""
+    es_el_jefe = bool(
+        jefe_nombre and strip_marks(jefe_nombre).casefold() == strip_marks(nombre).casefold()
+    )
+    if es_el_jefe:
+        jefe_nombre = ""
+    if jefe_nombre and jefatura:
+        cargo_jefe = f"Jefe de {jefatura}"
+    elif es_el_jefe and gerencia:
+        cargo_jefe = f"Gerente de {gerencia}"
+    else:
+        cargo_jefe = gerencia or (f"Jefe de {jefatura}" if jefatura else "")
     razon, ruc = empresa_legal((emp.get("empresa") or "").strip())
     cumple = rec.get("cumple_record")
     return DocContext(
         fecha=today,
-        nombre=(emp.get("nombre") or "").strip(),
+        nombre=nombre,
         dni=str(emp.get("dni") or "").strip(),
         empresa=razon,
         ruc=ruc,
-        jefe=jefe_nombre or jefatura,
-        cargo_jefe=(
-            f"Jefe de {jefatura}"
-            if jefe_nombre and jefatura
-            else gerencia or (f"Jefe de {jefatura}" if jefatura else "")
-        ),
+        jefe=jefe_nombre or (gerencia if es_el_jefe else jefatura) or jefatura,
+        cargo_jefe=cargo_jefe,
         record=rec.get("record_vacacional") or f"{year - 1}-{year}",
         inicio=inicio,
         fin=fin,

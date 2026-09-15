@@ -223,6 +223,39 @@ def documentos_pendientes(
     return items
 
 
+def calendario_documentos(items: list[dict], periodos: list[dict], today: date) -> list[dict]:
+    """Cómo se reparten los documentos del plan: lo que toca ahora y los memorandos que vienen.
+
+    documentos_pendientes solo lista memorandos sueltos cuando el convenio ya salió; para mostrar
+    el calendario completo antes de emitir, se agregan los memorandos de los demás tramos.
+    """
+    out = [
+        {
+            "titulo": i["titulo"],
+            "tipo": i["tipo"],
+            "tramo": tramo_json(i["tramo"]) if i.get("tramo") else None,
+            "estado": i["estado"],
+            "emitir_desde": i["emitir_desde"].isoformat() if i.get("emitir_desde") else None,
+        }
+        for i in items
+    ]
+    if not any(i["tipo"] in TIPOS_CONVENIO for i in items):
+        return out
+    ya = {(i["tramo"]["inicio"], i["tramo"]["fin"]) for i in items if i.get("tramo")}
+    ventana = fin_de_ventana(today)
+    for p in sorted(periodos, key=lambda x: x["inicio"]):
+        if p["fin"] < today or (p["inicio"], p["fin"]) in ya:
+            continue
+        out.append({
+            "titulo": TITULO_DE_TIPO[TIPO_MEMORANDO],
+            "tipo": TIPO_MEMORANDO,
+            "tramo": tramo_json(p),
+            "estado": POR_EMITIR if p["inicio"] <= ventana else PROXIMO,
+            "emitir_desde": emitir_desde(p["inicio"]).isoformat(),
+        })
+    return out
+
+
 def filas_a_registrar(item: dict) -> list[dict]:
     """Filas de plan_documento que deja una emisión (el paquete y, si va dentro, su memorando)."""
     tramo = item.get("tramo")
