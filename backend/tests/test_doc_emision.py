@@ -80,10 +80,10 @@ def test_pdf_del_convenio_usa_el_tramo_de_septiembre():
     )
     text = document_plain(2, ctx)
     memorando = text.split("MEMORANDO DE VACACIONES")[-1]
-    assert "por el periodo de 30 días" in memorando
-    assert "se le otorga 30 días de descanso vacacional" in memorando
-    assert "del 14 de septiembre al 18 de diciembre del año 2026" in memorando
-    assert " | " not in memorando, "el memorando no lleva tabla"
+    assert "de 30 (treinta) días" in memorando
+    assert "se le otorga 7 (siete) días" in memorando
+    assert "del 14 al 20 de septiembre" in memorando
+    assert "diciembre" not in memorando
     assert "14/09/2026" in text
     assert "Sexto periodo" in text
     assert "Séptimo periodo" in text

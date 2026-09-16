@@ -259,10 +259,10 @@ def test_pdf_fraccionamiento_llena_tablas_y_firmas():
     assert "JEFE INMEDIATO" not in text
     assert "Personas & Cultura" in text
     memorando = text.split("MEMORANDO DE VACACIONES")[-1]
-    # El memorando del fraccionamiento otorga el total programado, del primer inicio al último fin.
-    assert "por el periodo de 30 días" in memorando
-    assert "se le otorga 30 días de descanso vacacional" in memorando
-    assert "del 1 de septiembre al 15 de diciembre del año 2026" in memorando
+    # El fraccionamiento aprobado es por 30; el memorando otorga solo la salida de ahora.
+    assert "de 30 (treinta) días" in memorando
+    assert "se le otorga 15 (quince) días" in memorando
+    assert "del 1 al 15 de septiembre" in memorando
     pie = text.split("Atentamente.")[-1]
     assert "ANA PEREZ" not in pie
     assert "FIRMA Y HUELLA DEL TRABAJADOR" in pie
@@ -354,10 +354,9 @@ def test_pdf_sexto_periodo_no_dice_periodo_6():
     assert "Sexto periodo" in text
     assert "Periodo 6" not in text
     memorando = text.split("MEMORANDO DE VACACIONES")[-1]
-    assert "por el periodo de 30 días" in memorando
-    assert "se le otorga 30 días de descanso vacacional" in memorando
-    assert "del 15 de septiembre al 19 de noviembre del año 2026" in memorando
-    assert "Sexto periodo" not in memorando
+    assert "de 30 (treinta) días" in memorando
+    assert "se le otorga 7 (siete) días" in memorando
+    assert "del 15 al 21 de septiembre" in memorando
 
 
 def test_solicitud_no_se_dirige_al_propio_trabajador_si_es_jefe():

@@ -62,11 +62,13 @@ def test_plan_15_mas_tramos_de_3_memorando_de_15_y_calendario_por_partes():
     assert items[0]["tramo"]["dias"] == 15
     memo = document_plain(2, item_context(APTO, items[0], year=2026, fecha_doc=hoy, programmed=[]))
     memo = memo.split("MEMORANDO DE VACACIONES")[-1]
-    # Memorando del fraccionamiento (formato de la plantilla): total y rango del primer al último periodo.
-    assert "por el periodo de 30 días" in memo
-    assert "se le otorga 30 días de descanso vacacional" in memo
-    assert "del 21 de septiembre al 9 de diciembre del año 2026" in memo
-    assert " | " not in memo, "el memorando no lleva tabla"
+    # Pauta de la reunión: el fraccionamiento concedido es el total, pero se otorga la salida
+    # que toca ahora, con su rango real. Las otras cinco salidas van en su propio memorando.
+    assert "por el periodo de 30 (treinta) días" in memo
+    assert "se le otorga 15 (quince) días" in memo
+    assert "del 21 de septiembre al 5 de octubre" in memo
+    assert "9 de diciembre" not in memo, "el memorando no estira el rango hasta el último tramo"
+    assert " | " not in memo, "el memorando no lleva tabla de periodos"
     cal = calendario_documentos(items, periodos, hoy)
     assert [c["tipo"] for c in cal] == ["fraccionamiento"] + ["memorando"] * 5
     assert cal[0]["estado"] == "por_emitir"
