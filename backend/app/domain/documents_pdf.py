@@ -325,8 +325,11 @@ def _esc_fraccionamiento(ctx: DocContext):
 
     if not ctx.memorando:
         return
-    # El fraccionamiento aprobado es por el total (30); el memorando otorga solo la salida que
-    # toca ahora (ctx.inicio–fin). Las siguientes salidas llevan su propio memorando.
+    # Acuerdo con Personas y Cultura (15/09/2026): el memorando del fraccionamiento otorga el total
+    # programado (30 días), del inicio del primer periodo al fin del último. Texto igual a la
+    # plantilla escenario_2_fraccionamiento.docx (sin tabla).
+    primero = ctx.periodos[0]["inicio"] if ctx.periodos else ctx.inicio
+    ultimo = ctx.periodos[-1]["fin"] if ctx.periodos else ctx.fin
     yield "break", None
     yield from _esc_memorando(
         ctx,
@@ -335,14 +338,14 @@ def _esc_fraccionamiento(ctx: DocContext):
         cuerpo=[
             (
                 "Por medio de la presente cumplimos con comunicarle que se le concede su solicitud "
-                f"de fraccionamiento de descanso vacacional de {dias_con_palabras(total)}, "
+                f"de fraccionamiento de descanso vacacional por el periodo de {total} días, "
                 f"correspondiente al récord vacacional {ctx.record}."
             ),
             ART8,
             (
-                "Por lo tanto, conforme al acuerdo de fraccionamiento, se le otorga "
-                f"{dias_con_palabras(ctx.dias)} de descanso vacacional, "
-                f"programándose {rango_narrativo(ctx.inicio, ctx.fin)}."
+                "Por lo tanto, se concede a su solicitud y se le otorga "
+                f"{total} días de descanso vacacional, "
+                f"programándose {rango_narrativo(primero, ultimo)}."
             ),
         ],
     )
